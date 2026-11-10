@@ -5,6 +5,7 @@ import {
 } from "../state.js";
 import { sendKmailMessage } from "./kmailutils.js";
 import { getCommandAccountId } from "./commandaccount.js";
+import { findItemByName } from "./itemutils.js";
 import type { Task } from "../types.js";
 
 type CancelResult = {
@@ -18,7 +19,7 @@ export async function cancelOrderForPlayer(
   selector: string,
 ): Promise<CancelResult> {
   const itemName = selector.trim();
-  let item = await gameData.findItemByName(itemName);
+  let item = await findItemByName(itemName);
   if (!item && /^\d+$/.test(itemName)) {
     const itemId = Number(itemName);
     if (Number.isSafeInteger(itemId) && itemId > 0) {

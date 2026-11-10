@@ -23,7 +23,7 @@ export const OrdersTask: Task = {
           const quantity = getOrderQuantity(order.meat, order.price);
           return [
             `- ${itemName} (ID ${itemId})`,
-            `    - ${quantity.toLocaleString()} items at ${order.price.toLocaleString()} meat each (${order.meat.toLocaleString()} meat reserved)`,
+            `-- ${quantity.toLocaleString()} items at ${order.price.toLocaleString()} meat each (${order.meat.toLocaleString()} meat reserved)`,
           ].join("\n");
         }),
     );
@@ -35,14 +35,14 @@ export const OrdersTask: Task = {
           ([priceA], [priceB]) => priceB - priceA,
         );
         const highestLevels = levels.slice(0, 3).map(([price, quantity]) => {
-          return `    - ${quantity.toLocaleString()} at ${price.toLocaleString()} meat each`;
+          return `-- ${quantity.toLocaleString()} at ${price.toLocaleString()} meat each`;
         });
         const lowerQuantity = levels
           .slice(3)
           .reduce((total, [, quantity]) => total + quantity, 0);
         if (lowerQuantity > 0) {
           highestLevels.push(
-            `    - And ${lowerQuantity.toLocaleString()} more at lower prices`,
+            `-- And ${lowerQuantity.toLocaleString()} more at lower prices`,
           );
         }
         return `- ${itemName} (ID ${itemId})\n${highestLevels.join("\n")}`;
@@ -57,7 +57,7 @@ export const OrdersTask: Task = {
           : "The bot's promotional buy orders:",
         ownLines.length ? ownLines.join("\n") : "- None",
         "",
-        "All active buy orders by item (highest prices first):",
+        "Other buy orders:",
         marketLines.length ? marketLines.join("\n") : "- None",
       ].join("\n"),
     );

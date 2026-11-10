@@ -41,7 +41,7 @@ export const TraderTasks: Task[] = [
   OperatorNotificationsTask,
   DeleteProcessedKmailTask,
   SpamOffChatEffectsTask,
-  ChatBeaconTask,
+  //ChatBeaconTask,
   PollChatTask,
   LedgerLogTask,
 ];

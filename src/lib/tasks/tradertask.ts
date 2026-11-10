@@ -5,6 +5,7 @@ import { getActiveBuyOrdersForItem, getOrderQuantity } from "../orders.js";
 import { quoteMessage } from "./operator.js";
 import { cancelOrderForPlayer } from "./cancelorder.js";
 import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
+import { findItemByName } from "./itemutils.js";
 import {
   MAX_BUY_ORDER_PRICE,
   MIN_BUY_ORDER_PRICE,
@@ -499,7 +500,7 @@ async function formatSurplusBalance(
 async function parseBuyOrder(text: string): Promise<
   | {
       ok: true;
-      item: NonNullable<Awaited<ReturnType<typeof gameData.findItemByName>>>;
+      item: NonNullable<Awaited<ReturnType<typeof findItemByName>>>;
       price: number;
       quantity?: number;
     }
@@ -537,10 +538,12 @@ async function parseBuyOrder(text: string): Promise<
         "Use the format `[optional quantity] x [item name or item id] @ [price per item]`.",
     };
   }
-  const itemName = itemNameMatch.trim();
+  const matchedItemName = itemNameMatch.trim();
+  const itemName =
+    matchedItemName || trimmed.slice(0, trimmed.indexOf("@")).trim();
   const price = Number(priceMatch.replace(/,/g, ""));
   const quantity =
-    quantityMatch === undefined
+    quantityMatch === undefined || !matchedItemName
       ? undefined
       : Number(quantityMatch.replace(/,/g, ""));
   if (!itemName || !Number.isSafeInteger(price) || price <= 0) {
@@ -567,7 +570,7 @@ async function parseBuyOrder(text: string): Promise<
     };
   }
 
-  let item = await gameData.findItemByName(itemName);
+  let item = await findItemByName(itemName);
   if (!item && /^\d+$/.test(itemName)) {
     const itemId = Number(itemName);
     if (Number.isSafeInteger(itemId) && itemId > 0) {
