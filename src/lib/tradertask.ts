@@ -161,7 +161,7 @@ async function processIncomingKmail(
       continue;
     }
     let remainingQuantity = quantity;
-    const orders = getActiveBuyOrdersForItem(state.players, itemId, senderId);
+    const orders = getActiveBuyOrdersForItem(state.players, itemId);
 
     for (const { playerId, player, order } of orders) {
       if (remainingQuantity === 0) {
@@ -187,24 +187,58 @@ async function processIncomingKmail(
   }
 
   validateFulfillments(senderId, receivedMeat, fulfillments, state);
-  state.recordSurplus(senderId, 0, receivedItems, message.time, false);
+  const selfPurchasedItems = new Map<number, number>();
+  for (const fulfillment of fulfillments) {
+    if (fulfillment.buyerId === senderId) {
+      selfPurchasedItems.set(
+        fulfillment.itemId,
+        (selfPurchasedItems.get(fulfillment.itemId) ?? 0) +
+          fulfillment.quantity,
+      );
+    }
+  }
+  const sellerItems = new Map(
+    [...receivedItems].map(([itemId, quantity]) => [
+      itemId,
+      quantity - (selfPurchasedItems.get(itemId) ?? 0),
+    ]),
+  );
+  for (const [itemId, quantity] of sellerItems) {
+    if (quantity <= 0) {
+      sellerItems.delete(itemId);
+    }
+  }
+  state.recordSurplus(senderId, 0, sellerItems, message.time, false);
   const surplusItems = new Map(receivedItems);
+  for (const [itemId, quantity] of selfPurchasedItems) {
+    surplusItems.set(itemId, (surplusItems.get(itemId) ?? 0) - quantity);
+  }
 
   for (const fulfillment of fulfillments) {
     const { buyerId, itemId, quantity, price, player, order } = fulfillment;
     const totalPrice = quantity * price;
-    state.recordPurchase(buyerId, itemId, quantity, price, message.time, false);
-    state.recordSale(senderId, itemId, quantity, price, message.time, false);
-    state.recordTradeAudit(
-      senderId,
+    state.recordPurchase(
       buyerId,
       itemId,
       quantity,
       price,
       message.time,
+      buyerId === senderId,
+      totalPrice,
     );
+    if (buyerId !== senderId) {
+      state.recordSale(senderId, itemId, quantity, price, message.time, false);
+      state.recordTradeAudit(
+        senderId,
+        buyerId,
+        itemId,
+        quantity,
+        price,
+        message.time,
+      );
+      surplusItems.set(itemId, (surplusItems.get(itemId) ?? 0) - quantity);
+    }
     order.meat -= totalPrice;
-    surplusItems.set(itemId, (surplusItems.get(itemId) ?? 0) - quantity);
     if (order.meat === 0) {
       player.orders.delete(itemId);
     }
@@ -217,7 +251,31 @@ async function processIncomingKmail(
   state.recordSurplusAudit(senderId, 0, surplusItems, message.time);
 
   if (receivedMeat <= 0) {
-    return {};
+    const fulfilledLines = await Promise.all(
+      fulfillments.map(async ({ itemId, quantity, price }) => {
+        const item = await gameData.findItemById(itemId);
+        return `- Matched ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} at ${price.toLocaleString()} meat each.`;
+      }),
+    );
+    const surplusLines = await Promise.all(
+      [...surplusItems].map(async ([itemId, quantity]) => {
+        const item = await gameData.findItemById(itemId);
+        return `- ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} added to surplus.`;
+      }),
+    );
+    return {
+      reply: [
+        "I received your items.",
+        "",
+        "Fulfilled buy orders:",
+        fulfilledLines.length > 0 ? fulfilledLines.join("\n") : "- None",
+        "",
+        "Items added to surplus:",
+        surplusLines.length > 0 ? surplusLines.join("\n") : "- None",
+        "",
+        await formatSurplusBalance(state, senderId),
+      ].join("\n"),
+    };
   }
 
   if (!parsedOrder) {
@@ -385,45 +443,37 @@ function validateFulfillments(
     number,
     {
       meat: number;
-      surplusMeat: number;
-      saleProceeds: number;
       items: Map<number, number>;
+      reservedOrders: Map<BuyOrder, number>;
     }
   >();
 
-  for (const { buyerId, itemId, quantity, price } of fulfillments) {
+  for (const { buyerId, itemId, quantity, price, order } of fulfillments) {
     const totalPrice = quantity * price;
-    if (
-      !Number.isSafeInteger(totalPrice) ||
-      senderProceeds > Number.MAX_SAFE_INTEGER - totalPrice
-    ) {
+    if (!Number.isSafeInteger(totalPrice)) {
       throw new RangeError("Incoming trade proceeds exceed safe limits");
     }
-    senderProceeds += totalPrice;
+    if (buyerId !== senderId) {
+      if (senderProceeds > Number.MAX_SAFE_INTEGER - totalPrice) {
+        throw new RangeError("Incoming trade proceeds exceed safe limits");
+      }
+      senderProceeds += totalPrice;
+    }
 
     let spending = buyerSpending.get(buyerId);
     if (!spending) {
       const buyer = state.getPlayer(buyerId);
       spending = {
         meat: buyer.meat,
-        surplusMeat: buyer.surplusMeat,
-        saleProceeds: buyer.transactions.reduce(
-          (total, transaction) =>
-            transaction.type === "sold"
-              ? total + transaction.remainingMeat
-              : total,
-          0,
-        ),
         items: new Map(),
+        reservedOrders: new Map(),
       };
       buyerSpending.set(buyerId, spending);
     }
-    if (
-      spending.meat < totalPrice ||
-      spending.surplusMeat + spending.saleProceeds < totalPrice
-    ) {
+    const orderSpent = spending.reservedOrders.get(order) ?? 0;
+    if (spending.meat < totalPrice || order.meat - orderSpent < totalPrice) {
       throw new RangeError(
-        `Player ${buyerId} does not have enough accounted meat to fulfill the order`,
+        `Player ${buyerId} does not have enough reserved order meat to fulfill the order`,
       );
     }
     const buyerItems = state.getPlayer(buyerId).items.get(itemId) ?? 0;
@@ -433,10 +483,8 @@ function validateFulfillments(
     ) {
       throw new RangeError(`Purchase quantity for item ${itemId} is too large`);
     }
-    const spentSurplus = Math.min(spending.surplusMeat, totalPrice);
-    spending.surplusMeat -= spentSurplus;
-    spending.saleProceeds -= totalPrice - spentSurplus;
     spending.meat -= totalPrice;
+    spending.reservedOrders.set(order, orderSpent + totalPrice);
     spending.items.set(itemId, (spending.items.get(itemId) ?? 0) + quantity);
   }
 

@@ -448,10 +448,18 @@ export class TraderState {
     price: number,
     timestamp = new Date(),
     recordAudit = true,
+    reservedMeat = 0,
   ): void {
     validateTrade(playerId, itemId, quantity, price, timestamp);
     const player = this.getPlayer(playerId);
     const totalPrice = quantity * price;
+    if (
+      !Number.isSafeInteger(reservedMeat) ||
+      reservedMeat < 0 ||
+      reservedMeat > totalPrice
+    ) {
+      throw new RangeError("Invalid reserved meat applied to purchase");
+    }
     if (player.meat < totalPrice) {
       throw new RangeError(`Player ${playerId} does not have enough stored meat`);
     }
@@ -466,15 +474,16 @@ export class TraderState {
         transaction.type === "sold" ? total + transaction.remainingMeat : total,
       0,
     );
-    if (saleProceeds + player.surplusMeat < totalPrice) {
+    const unreservedPrice = totalPrice - reservedMeat;
+    if (saleProceeds + player.surplusMeat < unreservedPrice) {
       throw new RangeError(
         `Player ${playerId} does not have enough accounted meat to fund the purchase`,
       );
     }
 
-    const spentSurplus = Math.min(player.surplusMeat, totalPrice);
+    const spentSurplus = Math.min(player.surplusMeat, unreservedPrice);
     player.surplusMeat -= spentSurplus;
-    let remainingSaleProceeds = totalPrice - spentSurplus;
+    let remainingSaleProceeds = unreservedPrice - spentSurplus;
     for (const transaction of player.transactions) {
       if (transaction.type !== "sold") {
         continue;
