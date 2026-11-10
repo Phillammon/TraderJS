@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Client } from "kol.js";
-import { config } from "./config.js";
-import type { TraderState } from "./state.js";
-import type { Task } from "./types.js";
+import { config } from "../config.js";
+import type { TraderState } from "../state.js";
+import type { Task } from "../types.js";
+import { sendKmailMessage } from "./kmailutils.js";
 
 type ChatMessage = Awaited<
   ReturnType<Client["chat"]["fetch"]>
@@ -39,7 +40,7 @@ export const OperatorNotificationsTask: Task = {
     }
 
     for (const [notificationId, message] of state.pendingOperatorNotifications) {
-      await client.kmail.send(config.OPERATOR_ID, message);
+      await sendKmailMessage(client, config.OPERATOR_ID, message);
       state.completeOperatorNotification(notificationId);
       state.save();
     }

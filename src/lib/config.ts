@@ -18,7 +18,7 @@ export const schema = {
 
   TRADE_BEACON_DELAY: {
     type: Number,
-    default: 3600,
+    default: 10800,
   },
 
   WITHDRAWAL_DELAY: {
@@ -33,7 +33,7 @@ export const schema = {
 
   LEDGER_LOG_DELAY: {
     type: Number,
-    default: 3600,
+    default: 10800,
   },
 
   CHAT_POLL_DELAY: {

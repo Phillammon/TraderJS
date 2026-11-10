@@ -1,4 +1,4 @@
-import type { Task } from "./types.js";
+import type { Task } from "../types.js";
 
 export const DeleteProcessedKmailTask: Task = {
   name: "Delete Processed Kmails",

@@ -3,6 +3,7 @@ import { config } from "./config.js";
 
 export const MIN_BUY_ORDER_PRICE = 100;
 export const MAX_BUY_ORDER_PRICE = 1_000_000_000;
+export const PROMOTIONAL_ACCOUNT_ID = 0;
 
 export type BuyOrder = {
   meat: number;
@@ -85,6 +86,20 @@ export type AuditTransaction =
       timestamp: string;
       meat: number;
       items: Record<string, number>;
+    }
+  | {
+      type: "orderCancelled";
+      playerId: number;
+      itemId: number;
+      timestamp: string;
+      meat: number;
+    }
+  | {
+      type: "unallocated";
+      playerId: number;
+      timestamp: string;
+      meat: number;
+      items: Record<string, number>;
     };
 
 type StoredPlayerState = {
@@ -106,10 +121,12 @@ type StoredState = {
   processedKmailIds?: number[];
   pendingKmailReplies?: Record<string, { playerId: number; message: string }>;
   pendingOperatorNotifications?: Record<string, string>;
+  cancelQueue?: { playerId: number; item: string }[];
   chatQueues?: Record<ChatCommand, number[]>;
 };
 
 export type ChatCommand = "help" | "orders" | "withdraw" | "balance";
+export type CancelRequest = { playerId: number; item: string };
 
 export class TraderState {
   public players = new Map<number, PlayerState>();
@@ -124,6 +141,7 @@ export class TraderState {
     { playerId: number; message: string }
   >();
   public readonly pendingOperatorNotifications = new Map<string, string>();
+  public readonly cancelQueue: CancelRequest[] = [];
   public readonly helpQueue: number[] = [];
   public readonly ordersQueue: number[] = [];
   public readonly withdrawQueue: number[] = [];
@@ -141,7 +159,10 @@ export class TraderState {
   }
 
   public getPlayer(playerId: number): PlayerState {
-    if (!Number.isSafeInteger(playerId) || playerId <= 0) {
+    if (
+      !Number.isSafeInteger(playerId) ||
+      (playerId <= 0 && playerId !== PROMOTIONAL_ACCOUNT_ID)
+    ) {
       throw new RangeError(`Invalid player id: ${playerId}`);
     }
 
@@ -161,6 +182,151 @@ export class TraderState {
     return player;
   }
 
+  public getOwnedMeat(totalMeat: number): number {
+    if (!Number.isSafeInteger(totalMeat) || totalMeat < 0) {
+      throw new RangeError(`Invalid total meat: ${totalMeat}`);
+    }
+    const userMeat = [...this.players]
+      .filter(([playerId]) => playerId !== PROMOTIONAL_ACCOUNT_ID)
+      .reduce((total, [, player]) => total + player.meat, 0);
+    if (!Number.isSafeInteger(userMeat) || userMeat > totalMeat) {
+      throw new RangeError(
+        `Stored user meat (${userMeat}) exceeds bot meat (${totalMeat})`,
+      );
+    }
+    return totalMeat - userMeat;
+  }
+
+  public syncPromotionalAccount(totalMeat: number): number {
+    const ownedMeat = this.getOwnedMeat(totalMeat);
+    const account = this.getPlayer(PROMOTIONAL_ACCOUNT_ID);
+    const reservedMeat = [...account.orders.values()].reduce(
+      (total, order) => total + order.meat,
+      0,
+    );
+    if (!Number.isSafeInteger(reservedMeat) || reservedMeat > ownedMeat) {
+      throw new RangeError(
+        `Promotional orders reserve ${reservedMeat} meat but only ${ownedMeat} bot-owned meat is available`,
+      );
+    }
+    account.meat = ownedMeat;
+    account.surplusMeat = ownedMeat - reservedMeat;
+    return ownedMeat - reservedMeat;
+  }
+
+  public createPromotionalBuyOrder(
+    totalMeat: number,
+    itemId: number,
+    price: number,
+    requestedQuantity: number | undefined,
+    timestamp: Date,
+  ): { quantity: number; allocatedMeat: number; releasedMeat: number } {
+    if (
+      !Number.isSafeInteger(itemId) ||
+      itemId <= 0 ||
+      !Number.isSafeInteger(price) ||
+      price < MIN_BUY_ORDER_PRICE ||
+      price > MAX_BUY_ORDER_PRICE ||
+      (requestedQuantity !== undefined &&
+        (!Number.isSafeInteger(requestedQuantity) || requestedQuantity <= 0)) ||
+      Number.isNaN(timestamp.getTime())
+    ) {
+      throw new RangeError("Invalid promotional buy order");
+    }
+    const availableMeat = this.syncPromotionalAccount(totalMeat);
+    const account = this.getPlayer(PROMOTIONAL_ACCOUNT_ID);
+    const existing = account.orders.get(itemId);
+    const releasedMeat = existing?.meat ?? 0;
+    const replacementAvailable = availableMeat + releasedMeat;
+    const quantity =
+      requestedQuantity ?? Math.floor(replacementAvailable / price);
+    if (quantity <= 0) {
+      throw new RangeError(
+        `Promotional account does not have enough own meat to fund an item at ${price.toLocaleString()} meat each`,
+      );
+    }
+    const allocatedMeat = quantity * price;
+    if (
+      !Number.isSafeInteger(allocatedMeat) ||
+      allocatedMeat > replacementAvailable
+    ) {
+      throw new RangeError("Promotional order allocation exceeds safe limits");
+    }
+    account.orders.set(itemId, {
+      meat: allocatedMeat,
+      price,
+      lastModified: timestamp.toISOString(),
+    });
+    account.surplusMeat =
+      account.meat -
+      ([...account.orders.values()].reduce(
+        (total, order) => total + order.meat,
+        0,
+      ));
+    return { quantity, allocatedMeat, releasedMeat };
+  }
+
+  public unallocatePromotionalAssets(timestamp = new Date()): {
+    meat: number;
+    items: Map<number, number>;
+  } {
+    if (Number.isNaN(timestamp.getTime())) {
+      throw new RangeError("Invalid promotional unallocation timestamp");
+    }
+    const account = this.getPlayer(PROMOTIONAL_ACCOUNT_ID);
+    const reservedMeat = [...account.orders.values()].reduce(
+      (total, order) => total + order.meat,
+      0,
+    );
+    if (reservedMeat > account.meat) {
+      throw new RangeError("Promotional orders exceed their allocated meat");
+    }
+
+    const meat = account.meat - reservedMeat;
+    const items = new Map(
+      [...account.items].filter(([, quantity]) => quantity > 0),
+    );
+    for (const [itemId, quantity] of items) {
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+        throw new RangeError(
+          `Invalid promotional item quantity for item ${itemId}`,
+        );
+      }
+    }
+    account.meat = reservedMeat;
+    account.surplusMeat = 0;
+    for (const [itemId, quantity] of items) {
+      let remaining = quantity;
+      for (const transaction of account.transactions) {
+        if (transaction.type !== "bought" || transaction.itemId !== itemId) {
+          continue;
+        }
+        const unallocated = Math.min(remaining, transaction.remainingQuantity);
+        transaction.remainingQuantity -= unallocated;
+        remaining -= unallocated;
+        if (remaining === 0) {
+          break;
+        }
+      }
+      account.items.delete(itemId);
+      account.surplusItems.delete(itemId);
+    }
+    account.transactions = account.transactions.filter(
+      (transaction) =>
+        transaction.type !== "bought" || transaction.remainingQuantity > 0,
+    );
+    if (meat > 0 || items.size > 0) {
+      this.pendingAuditTransactions.push({
+        type: "unallocated",
+        playerId: PROMOTIONAL_ACCOUNT_ID,
+        timestamp: timestamp.toISOString(),
+        meat,
+        items: Object.fromEntries(items),
+      });
+    }
+    return { meat, items };
+  }
+
   public load(): void {
     this.players.clear();
     this.helpQueue.length = 0;
@@ -175,6 +341,7 @@ export class TraderState {
     this.processedKmailIds.clear();
     this.pendingKmailReplies.clear();
     this.pendingOperatorNotifications.clear();
+    this.cancelQueue.length = 0;
     if (!fs.existsSync(this.stateFile)) {
       return;
     }
@@ -277,6 +444,26 @@ export class TraderState {
         this.pendingOperatorNotifications.set(notificationId, message);
       }
     }
+    if (stored.cancelQueue !== undefined) {
+      if (!Array.isArray(stored.cancelQueue)) {
+        throw new TypeError(`Invalid cancel queue: ${this.stateFile}`);
+      }
+      for (const request of stored.cancelQueue) {
+        if (
+          !isRecord(request) ||
+          typeof request.playerId !== "number" ||
+          !Number.isSafeInteger(request.playerId) ||
+          request.playerId <= 0 ||
+          typeof request.item !== "string"
+        ) {
+          throw new TypeError(`Invalid cancel queue entry: ${this.stateFile}`);
+        }
+        this.cancelQueue.push({
+          playerId: request.playerId,
+          item: request.item,
+        });
+      }
+    }
     if (stored.chatQueues !== undefined) {
       if (!isRecord(stored.chatQueues)) {
         throw new TypeError(`Invalid chat queues: ${this.stateFile}`);
@@ -303,7 +490,10 @@ export class TraderState {
     }
 
     for (const [playerIdText, player] of Object.entries(stored.players)) {
-      const playerId = parseId(playerIdText, "player");
+      const playerId =
+        playerIdText === String(PROMOTIONAL_ACCOUNT_ID)
+          ? PROMOTIONAL_ACCOUNT_ID
+          : parseId(playerIdText, "player");
       if (
         !isRecord(player) ||
         typeof player.meat !== "number" ||
@@ -420,6 +610,7 @@ export class TraderState {
           pendingOperatorNotifications: Object.fromEntries(
             this.pendingOperatorNotifications,
           ),
+          cancelQueue: this.cancelQueue,
           chatQueues: {
             help: this.helpQueue,
             orders: this.ordersQueue,
@@ -441,24 +632,54 @@ export class TraderState {
     this.queueFor(command).push(playerId);
   }
 
+  public enqueueCancelRequest(playerId: number, item: string): void {
+    if (
+      !Number.isSafeInteger(playerId) ||
+      playerId <= 0 ||
+      typeof item !== "string" ||
+      !item.trim()
+    ) {
+      throw new TypeError("Invalid cancel request");
+    }
+    this.cancelQueue.push({ playerId, item: item.trim() });
+  }
+
+  public completeCancelRequest(request: CancelRequest): void {
+    if (this.cancelQueue[0] !== request) {
+      throw new Error("Unexpected cancel queue entry");
+    }
+    this.cancelQueue.shift();
+  }
+
   public recordPurchase(
     playerId: number,
     itemId: number,
     quantity: number,
     price: number,
     timestamp = new Date(),
-    recordAudit = true,
-    reservedMeat = 0,
+    options: {
+      recordAudit?: boolean;
+      reservedMeat?: number;
+      selfDealing?: boolean;
+    } = {},
   ): void {
     validateTrade(playerId, itemId, quantity, price, timestamp);
     const player = this.getPlayer(playerId);
     const totalPrice = quantity * price;
+    const recordAudit = options.recordAudit ?? true;
+    const reservedMeat = options.reservedMeat ?? 0;
+    const selfDealing = options.selfDealing ?? false;
     if (
       !Number.isSafeInteger(reservedMeat) ||
       reservedMeat < 0 ||
       reservedMeat > totalPrice
     ) {
       throw new RangeError("Invalid reserved meat applied to purchase");
+    }
+    if (selfDealing && reservedMeat !== totalPrice) {
+      throw new RangeError(
+        "Self-dealing purchases must be fully funded by reserved order meat",
+      );
     }
     if (player.meat < totalPrice) {
       throw new RangeError(`Player ${playerId} does not have enough stored meat`);
@@ -474,7 +695,7 @@ export class TraderState {
         transaction.type === "sold" ? total + transaction.remainingMeat : total,
       0,
     );
-    const unreservedPrice = totalPrice - reservedMeat;
+    const unreservedPrice = selfDealing ? 0 : totalPrice - reservedMeat;
     if (saleProceeds + player.surplusMeat < unreservedPrice) {
       throw new RangeError(
         `Player ${playerId} does not have enough accounted meat to fund the purchase`,
@@ -498,7 +719,9 @@ export class TraderState {
         break;
       }
     }
-    player.meat -= totalPrice;
+    if (!selfDealing) {
+      player.meat -= totalPrice;
+    }
     player.items.set(itemId, (player.items.get(itemId) ?? 0) + quantity);
     player.transactions.push({
       type: "bought",
@@ -622,7 +845,7 @@ export class TraderState {
       !Number.isSafeInteger(sellerId) ||
       sellerId <= 0 ||
       !Number.isSafeInteger(buyerId) ||
-      buyerId <= 0 ||
+      (buyerId <= 0 && buyerId !== PROMOTIONAL_ACCOUNT_ID) ||
       sellerId === buyerId
     ) {
       throw new RangeError("Invalid trade participants");
@@ -871,6 +1094,43 @@ export class TraderState {
     return releasedMeat;
   }
 
+  public cancelBuyOrder(
+    playerId: number,
+    itemId: number,
+    timestamp = new Date(),
+  ): number {
+    if (
+      !Number.isSafeInteger(itemId) ||
+      itemId <= 0 ||
+      Number.isNaN(timestamp.getTime())
+    ) {
+      throw new RangeError("Invalid buy order cancellation");
+    }
+    const player = this.getPlayer(playerId);
+    const order = player.orders.get(itemId);
+    if (!order) {
+      return 0;
+    }
+    if (
+      !Number.isSafeInteger(order.meat) ||
+      order.meat < 0 ||
+      order.meat > player.meat ||
+      order.meat > Number.MAX_SAFE_INTEGER - player.surplusMeat
+    ) {
+      throw new RangeError(`Cannot safely release order meat for player ${playerId}`);
+    }
+    player.orders.delete(itemId);
+    player.surplusMeat += order.meat;
+    this.pendingAuditTransactions.push({
+      type: "orderCancelled",
+      playerId,
+      itemId,
+      timestamp: timestamp.toISOString(),
+      meat: order.meat,
+    });
+    return order.meat;
+  }
+
   private recordAssetTransfer(
     type: "withdrawn" | "sent",
     playerId: number,
@@ -971,7 +1231,10 @@ function validateTrade(
   price: number,
   timestamp: Date,
 ): void {
-  if (!Number.isSafeInteger(playerId) || playerId <= 0) {
+  if (
+    !Number.isSafeInteger(playerId) ||
+    (playerId <= 0 && playerId !== PROMOTIONAL_ACCOUNT_ID)
+  ) {
     throw new RangeError(`Invalid player id: ${playerId}`);
   }
   if (!Number.isSafeInteger(itemId) || itemId <= 0) {
@@ -1090,7 +1353,8 @@ function parseAuditTransactions(input: unknown): AuditTransaction[] {
         transaction.sellerId <= 0 ||
         typeof transaction.buyerId !== "number" ||
         !Number.isSafeInteger(transaction.buyerId) ||
-        transaction.buyerId <= 0 ||
+        (transaction.buyerId <= 0 &&
+          transaction.buyerId !== PROMOTIONAL_ACCOUNT_ID) ||
         transaction.sellerId === transaction.buyerId ||
         typeof transaction.itemId !== "number" ||
         !Number.isSafeInteger(transaction.itemId) ||
@@ -1119,9 +1383,30 @@ function parseAuditTransactions(input: unknown): AuditTransaction[] {
     if (
       typeof transaction.playerId !== "number" ||
       !Number.isSafeInteger(transaction.playerId) ||
-      transaction.playerId <= 0
+      (transaction.playerId <= 0 &&
+        transaction.playerId !== PROMOTIONAL_ACCOUNT_ID)
     ) {
       throw new TypeError(`Invalid audit transaction ${index}`);
+    }
+
+    if (transaction.type === "orderCancelled") {
+      if (
+        typeof transaction.itemId !== "number" ||
+        !Number.isSafeInteger(transaction.itemId) ||
+        transaction.itemId <= 0 ||
+        typeof transaction.meat !== "number" ||
+        !Number.isSafeInteger(transaction.meat) ||
+        transaction.meat < 0
+      ) {
+        throw new TypeError(`Invalid order cancellation audit transaction ${index}`);
+      }
+      return {
+        type: "orderCancelled",
+        playerId: transaction.playerId,
+        itemId: transaction.itemId,
+        timestamp: transaction.timestamp,
+        meat: transaction.meat,
+      };
     }
 
     if (
@@ -1171,7 +1456,8 @@ function parseAuditTransactions(input: unknown): AuditTransaction[] {
     if (
       (transaction.type === "withdrawn" ||
         transaction.type === "sent" ||
-        transaction.type === "surplus") &&
+        transaction.type === "surplus" ||
+        transaction.type === "unallocated") &&
       Number.isSafeInteger(transaction.meat) &&
       (transaction.meat as number) >= 0 &&
       isRecord(transaction.items)

@@ -2,7 +2,7 @@ import { Client } from "kol.js";
 
 import { config } from "./lib/config.js";
 import { loadRelevantItemsAndEffects } from "./lib/gameconstants.js";
-import { PollChatTask, TraderTasks } from "./lib/tasks.js";
+import { PollChatTask, TraderTasks } from "./lib/tasks/index.js";
 import { TraderState } from "./lib/state.js";
 
 const kolClient = new Client(config.KOL_USER, config.KOL_PASS);

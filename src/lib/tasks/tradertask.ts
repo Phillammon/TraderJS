@@ -1,15 +1,18 @@
 import { gameData, type Client } from "kol.js";
-import { relevantItemsAndEffects } from "./gameconstants.js";
-import { getActiveBuyOrdersForItem, getOrderQuantity } from "./orders.js";
+import { config } from "../config.js";
+import { relevantItemsAndEffects } from "../gameconstants.js";
+import { getActiveBuyOrdersForItem, getOrderQuantity } from "../orders.js";
 import { quoteMessage } from "./operator.js";
+import { cancelOrderForPlayer } from "./cancelorder.js";
 import {
   MAX_BUY_ORDER_PRICE,
   MIN_BUY_ORDER_PRICE,
+  PROMOTIONAL_ACCOUNT_ID,
   type BuyOrder,
   type PlayerState,
   type TraderState,
-} from "./state.js";
-import type { Task } from "./types.js";
+} from "../state.js";
+import type { Task } from "../types.js";
 
 type Kmail = Awaited<ReturnType<Client["kmail"]["fetch"]>>[number];
 type Fulfillment = {
@@ -43,12 +46,20 @@ export const TraderTask: Task = {
     }
 
     const messages = await client.kmail.fetch();
-    for (const message of messages) {
-      if (state.processedKmailIds.has(message.id)) {
-        continue;
-      }
+    const pendingMessages = messages.filter(
+      (message) => !state.processedKmailIds.has(message.id),
+    );
+    const processingOrder = [
+      ...pendingMessages.filter(
+        (message) => message.who.id !== config.OPERATOR_ID,
+      ),
+      ...pendingMessages.filter(
+        (message) => message.who.id === config.OPERATOR_ID,
+      ),
+    ];
+    for (const message of processingOrder) {
 
-      const result = await processIncomingKmail(message, state);
+      const result = await processIncomingKmail(client, message, state);
       state.markKmailProcessed(
         message.id,
         result.reply
@@ -86,6 +97,7 @@ function hasAssets(message: Kmail): boolean {
 }
 
 async function processIncomingKmail(
+  client: Client,
   message: Kmail,
   state: TraderState,
 ): Promise<KmailProcessingResult> {
@@ -100,6 +112,114 @@ async function processIncomingKmail(
     return {
       reply: `I couldn't process this kmail because it had an invalid timestamp. All attached meat and items have been added to surplus. ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason: reason,
+    };
+  }
+  const cancelMatch = /^cancel(?:\s+(.+))?$/i.exec(message.msg.trim());
+  if (cancelMatch) {
+    const selector = cancelMatch[1]?.trim();
+    if (!selector) {
+      const reason = "The cancel command did not include an item name or ID.";
+      state.recordSurplus(senderId, receivedMeat, receivedItems, message.time);
+      return {
+        reply: `To cancel an order, send "cancel [item name or item ID]" without attaching meat or items. ${receivedMeat > 0 || receivedItems.size > 0 ? `All attached resources were added to surplus. ${await formatSurplusBalance(state, senderId)}` : ""}`,
+        rejectionReason: reason,
+      };
+    }
+    if (receivedMeat > 0 || receivedItems.size > 0) {
+      const reason =
+        "A cancel command must not include meat or items; all attached resources were credited to sender surplus.";
+      state.recordSurplus(senderId, receivedMeat, receivedItems, message.time);
+      return {
+        reply: `I can't process a cancel command that includes assets. All attached meat and items were added to surplus. ${await formatSurplusBalance(state, senderId)}`,
+        rejectionReason: reason,
+      };
+    }
+    const accountId =
+      senderId === config.OPERATOR_ID ? PROMOTIONAL_ACCOUNT_ID : senderId;
+    const result = await cancelOrderForPlayer(state, accountId, selector);
+    return {
+      reply: result.message,
+      ...(result.rejectionReason
+        ? { rejectionReason: result.rejectionReason }
+        : {}),
+    };
+  }
+  if (senderId === config.OPERATOR_ID && message.msg.includes("@")) {
+    const attachedAssets =
+      receivedMeat > 0 || receivedItems.size > 0;
+    if (attachedAssets) {
+      state.recordSurplus(senderId, receivedMeat, receivedItems, message.time);
+    }
+
+    const parsedOrder = await parseBuyOrder(message.msg).catch(
+      (error: unknown) => ({
+        ok: false as const,
+        reason: `Could not parse the order note: ${error instanceof Error ? error.message : String(error)}`,
+      }),
+    );
+    if (!parsedOrder.ok) {
+      return {
+        reply: [
+          `I couldn't create a bot-funded buy order: ${parsedOrder.reason}`,
+          ...(attachedAssets
+            ? [
+                `Any attached assets were added to your surplus. ${await formatSurplusBalance(state, senderId)}`,
+              ]
+            : []),
+        ].join(" "),
+        rejectionReason: parsedOrder.reason,
+      };
+    }
+
+    const totalMeat = await getCurrentMeat(client);
+    const availableMeat = state.syncPromotionalAccount(totalMeat);
+    const previousOrderMeat =
+      state
+        .getPlayer(PROMOTIONAL_ACCOUNT_ID)
+        .orders.get(parsedOrder.item.id)?.meat ?? 0;
+    const replacementAvailable = availableMeat + previousOrderMeat;
+    const quantity =
+      parsedOrder.quantity ??
+      Math.floor(replacementAvailable / parsedOrder.price);
+    const requiredMeat = quantity * parsedOrder.price;
+    if (
+      quantity <= 0 ||
+      !Number.isSafeInteger(requiredMeat) ||
+      requiredMeat > replacementAvailable
+    ) {
+      const reason =
+        `The bot has ${replacementAvailable.toLocaleString()} meat available for this order, including its current allocation, which is not enough to fund ${parsedOrder.quantity ? `${parsedOrder.quantity.toLocaleString()} item(s)` : "one item"} at ${parsedOrder.price.toLocaleString()} meat each.`;
+      return {
+        reply: [
+          `I couldn't create a bot-funded buy order: ${reason}`,
+          ...(attachedAssets
+            ? [
+                `Any attached assets were added to your surplus. ${await formatSurplusBalance(state, senderId)}`,
+              ]
+            : []),
+        ].join(" "),
+        rejectionReason: reason,
+      };
+    }
+    const order = state.createPromotionalBuyOrder(
+      totalMeat,
+      parsedOrder.item.id,
+      parsedOrder.price,
+      parsedOrder.quantity,
+      message.time,
+    );
+    const remainingPromotionalMeat =
+      state.getPlayer(PROMOTIONAL_ACCOUNT_ID).surplusMeat;
+    return {
+      reply: [
+        `Bot-funded buy order set up: ${order.quantity.toLocaleString()} x ${parsedOrder.item.name} at ${parsedOrder.price.toLocaleString()} meat each (${order.allocatedMeat.toLocaleString()} meat allocated from bot-owned funds).`,
+        `${remainingPromotionalMeat.toLocaleString()} bot-owned meat remains unallocated.`,
+        ...(attachedAssets
+          ? [
+              `Your attached assets were credited to your surplus. ${await formatSurplusBalance(state, senderId)}`,
+            ]
+          : []),
+      ].join(" "),
     };
   }
   const realItems = [...receivedItems.keys()].filter(
@@ -118,7 +238,7 @@ async function processIncomingKmail(
     return {
       reply: [
         "I couldn't understand what you wanted because this kmail contained no meat or items.",
-        "To create a buy order, send meat with a note in the format `[item name or item id] @ [price]` (100 to 1,000,000,000 meat per item).",
+        "To create a buy order, send meat with a note in the format `[optional quantity] x [item name or item id] @ [price per item]` (100 to 1,000,000,000 meat per item).",
         "To fulfil a buy order, send the item(s) you want to sell.",
         'Whisper "help" for commands and more information.',
       ].join("\n"),
@@ -133,14 +253,23 @@ async function processIncomingKmail(
           reason: `Could not parse the order note: ${error instanceof Error ? error.message : String(error)}`,
         }))
       : undefined;
+  const requestedMeat =
+    parsedOrder?.ok && parsedOrder.quantity !== undefined
+      ? parsedOrder.quantity * parsedOrder.price
+      : undefined;
   const orderPlan =
-    parsedOrder && parsedOrder.ok && parsedOrder.price <= receivedMeat
+    parsedOrder?.ok &&
+    (requestedMeat ?? parsedOrder.price) <= receivedMeat
       ? {
           item: parsedOrder.item,
           price: parsedOrder.price,
-          quantity: Math.floor(receivedMeat / parsedOrder.price),
+          quantity:
+            parsedOrder.quantity ??
+            Math.floor(receivedMeat / parsedOrder.price),
           allocatedMeat:
-            Math.floor(receivedMeat / parsedOrder.price) * parsedOrder.price,
+            requestedMeat ??
+            Math.floor(receivedMeat / parsedOrder.price) *
+              parsedOrder.price,
         }
       : undefined;
   if (orderPlan) {
@@ -154,6 +283,12 @@ async function processIncomingKmail(
     if (!Number.isSafeInteger(postOrderSurplus)) {
       throw new RangeError("Buy order surplus exceeds safe limits");
     }
+  }
+  if (
+    receivedItems.size > 0 &&
+    state.players.get(PROMOTIONAL_ACCOUNT_ID)?.orders.size
+  ) {
+    state.syncPromotionalAccount(await getCurrentMeat(client));
   }
   const fulfillments: Fulfillment[] = [];
   for (const [itemId, quantity] of receivedItems) {
@@ -223,8 +358,11 @@ async function processIncomingKmail(
       quantity,
       price,
       message.time,
-      buyerId === senderId,
-      totalPrice,
+      {
+        recordAudit: true,
+        reservedMeat: totalPrice,
+        selfDealing: buyerId === senderId,
+      },
     );
     if (buyerId !== senderId) {
       state.recordSale(senderId, itemId, quantity, price, message.time, false);
@@ -290,12 +428,16 @@ async function processIncomingKmail(
     };
   }
 
-  if (parsedOrder.price > receivedMeat) {
+  const requiredMeat =
+    parsedOrder.quantity === undefined
+      ? parsedOrder.price
+      : parsedOrder.quantity * parsedOrder.price;
+  if (requiredMeat > receivedMeat) {
     state.recordSurplus(senderId, receivedMeat, new Map(), message.time, false);
     state.recordSurplusAudit(senderId, receivedMeat, new Map(), message.time);
-    const rejectionReason = `The requested price of ${parsedOrder.price.toLocaleString()} meat per item exceeds the ${receivedMeat.toLocaleString()} meat attached.`;
+    const rejectionReason = `The requested order requires ${requiredMeat.toLocaleString()} meat, but only ${receivedMeat.toLocaleString()} meat was attached.`;
     return {
-      reply: `I couldn't create a buy order for ${parsedOrder.item.name}: the price of ${parsedOrder.price.toLocaleString()} meat per item is greater than the ${receivedMeat.toLocaleString()} meat you sent. All sent meat has been added to your surplus balance. ${await formatSurplusBalance(state, senderId)}`,
+      reply: `I couldn't create a buy order for ${parsedOrder.item.name}: the requested order requires ${requiredMeat.toLocaleString()} meat, but you sent ${receivedMeat.toLocaleString()}. All sent meat has been added to your surplus balance. ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason,
     };
   }
@@ -324,6 +466,18 @@ async function processIncomingKmail(
       await formatSurplusBalance(state, senderId),
     ].join("\n"),
   };
+}
+
+async function getCurrentMeat(client: Client): Promise<number> {
+  const totalMeat = (await client.fetchStatus()).meat;
+  if (
+    typeof totalMeat !== "number" ||
+    !Number.isSafeInteger(totalMeat) ||
+    totalMeat < 0
+  ) {
+    throw new TypeError("Could not determine the bot's current meat balance");
+  }
+  return totalMeat;
 }
 
 function formatRejectedKmail(message: Kmail, reason: string): string {
@@ -359,6 +513,7 @@ async function parseBuyOrder(text: string): Promise<
       ok: true;
       item: NonNullable<Awaited<ReturnType<typeof gameData.findItemByName>>>;
       price: number;
+      quantity?: number;
     }
   | { ok: false; reason: string }
 > {
@@ -368,32 +523,53 @@ async function parseBuyOrder(text: string): Promise<
     return {
       ok: false,
       reason:
-        "I can only handle one order per kmail- I see too many @ signs here. Use the format `[item name or item id] @ [price]`",
+        "I can only handle one order per kmail- I see too many @ signs here. Use the format `[optional quantity] x [item name or item id] @ [price per item]`",
     };
   }
 
-  const match = /^([^@]+?)\s*@\s*((?:\d{1,3}(?:,\d{3})+)|\d+)$/.exec(trimmed);
+  const match =
+    /^(?:(\d{1,3}(?:,\d{3})+|\d+)\s*[xX]\s*)?([^@]+?)\s*@\s*((?:\d{1,3}(?:,\d{3})+)|\d+)$/.exec(
+      trimmed,
+    );
   if (!match) {
     return {
       ok: false,
-      reason: "Use the format `[item name or item id] @ [price]`.",
+      reason:
+        "Use the format `[optional quantity] x [item name or item id] @ [price per item]`.",
     };
   }
 
-  const itemNameMatch = match[1];
-  const priceMatch = match[2];
+  const quantityMatch = match[1];
+  const itemNameMatch = match[2];
+  const priceMatch = match[3];
   if (itemNameMatch === undefined || priceMatch === undefined) {
     return {
       ok: false,
-      reason: "Use the format `[item name or item id] @ [price]`.",
+      reason:
+        "Use the format `[optional quantity] x [item name or item id] @ [price per item]`.",
     };
   }
   const itemName = itemNameMatch.trim();
   const price = Number(priceMatch.replace(/,/g, ""));
+  const quantity =
+    quantityMatch === undefined
+      ? undefined
+      : Number(quantityMatch.replace(/,/g, ""));
   if (!itemName || !Number.isSafeInteger(price) || price <= 0) {
     return {
       ok: false,
       reason: "The item name and a positive whole-number price are required.",
+    };
+  }
+  if (
+    quantity !== undefined &&
+    (!Number.isSafeInteger(quantity) ||
+      quantity <= 0 ||
+      !Number.isSafeInteger(quantity * price))
+  ) {
+    return {
+      ok: false,
+      reason: "The requested quantity must be a positive whole number and the total order value must be within safe limits.",
     };
   }
   if (price < MIN_BUY_ORDER_PRICE || price > MAX_BUY_ORDER_PRICE) {
@@ -428,7 +604,12 @@ async function parseBuyOrder(text: string): Promise<
       reason: `${item.name} is not tradeable and is not marked as a gift item, so it cannot be used for a buy order.`,
     };
   }
-  return { ok: true, item, price };
+  return {
+    ok: true,
+    item,
+    price,
+    ...(quantity === undefined ? {} : { quantity }),
+  };
 }
 
 function validateFulfillments(
