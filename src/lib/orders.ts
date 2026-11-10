@@ -56,9 +56,14 @@ export function getActiveBuyOrdersForItem(
 
 export function aggregateBuyOrders(
   players: ReadonlyMap<number, PlayerState>,
+  excludedPlayerId?: number,
 ): Map<number, Map<number, number>> {
   const aggregated = new Map<number, Map<number, number>>();
-  for (const player of players.values()) {
+  for (const [playerId, player] of players) {
+    if (playerId === excludedPlayerId) {
+      continue;
+    }
+
     for (const [itemId, order] of player.orders) {
       if (order.meat <= 0 || order.price <= 0) {
         continue;

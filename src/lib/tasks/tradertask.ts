@@ -4,6 +4,7 @@ import { relevantItemsAndEffects } from "../gameconstants.js";
 import { getActiveBuyOrdersForItem, getOrderQuantity } from "../orders.js";
 import { quoteMessage } from "./operator.js";
 import { cancelOrderForPlayer } from "./cancelorder.js";
+import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
 import {
   MAX_BUY_ORDER_PRICE,
   MIN_BUY_ORDER_PRICE,
@@ -134,8 +135,7 @@ async function processIncomingKmail(
         rejectionReason: reason,
       };
     }
-    const accountId =
-      senderId === config.OPERATOR_ID ? PROMOTIONAL_ACCOUNT_ID : senderId;
+    const accountId = getCommandAccountId(senderId);
     const result = await cancelOrderForPlayer(state, accountId, selector);
     return {
       reply: result.message,
@@ -466,18 +466,6 @@ async function processIncomingKmail(
       await formatSurplusBalance(state, senderId),
     ].join("\n"),
   };
-}
-
-async function getCurrentMeat(client: Client): Promise<number> {
-  const totalMeat = (await client.fetchStatus()).meat;
-  if (
-    typeof totalMeat !== "number" ||
-    !Number.isSafeInteger(totalMeat) ||
-    totalMeat < 0
-  ) {
-    throw new TypeError("Could not determine the bot's current meat balance");
-  }
-  return totalMeat;
 }
 
 function formatRejectedKmail(message: Kmail, reason: string): string {

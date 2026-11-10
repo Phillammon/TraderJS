@@ -1,6 +1,9 @@
 import { getWithdrawableAssets } from "../orders.js";
+import { PROMOTIONAL_ACCOUNT_ID } from "../state.js";
 import { sendWithdrawal } from "./withdrawalsupport.js";
 import { sendKmailMessage } from "./kmailutils.js";
+import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
+import { getItemName } from "./itemutils.js";
 import type { Task } from "../types.js";
 
 export const WithdrawTask: Task = {
@@ -12,7 +15,31 @@ export const WithdrawTask: Task = {
       return true;
     }
 
-    const stored = state.getPlayer(playerId);
+    const accountId = getCommandAccountId(playerId);
+    const stored = state.getPlayer(accountId);
+    if (accountId === PROMOTIONAL_ACCOUNT_ID) {
+      const released = state.unallocatePromotionalAssets(
+        await getCurrentMeat(client),
+      );
+      const items = await Promise.all(
+        [...released.items].map(async ([itemId, quantity]) => {
+          return `${quantity.toLocaleString()} x ${await getItemName(itemId)}`;
+        }),
+      );
+      await sendKmailMessage(
+        client,
+        playerId,
+        [
+          "Unallocated the bot's promotional assets without sending them to a player.",
+          `Meat unallocated: ${released.meat.toLocaleString()}.`,
+          `Items unallocated: ${items.length > 0 ? items.join(", ") : "none"}.`,
+          `Bot-funded orders still active: ${stored.orders.size}.`,
+        ].join("\n"),
+      );
+      state.completeChatRequest("withdraw", playerId);
+      state.save();
+      return true;
+    }
     const available = getWithdrawableAssets(stored);
     if (available.items.size === 0 && available.meat === 0) {
       await sendKmailMessage(

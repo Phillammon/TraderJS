@@ -6,6 +6,8 @@ import {
 } from "../orders.js";
 import { prepareWithdrawalReport } from "./withdrawalsupport.js";
 import { sendKmailMessage } from "./kmailutils.js";
+import { PROMOTIONAL_ACCOUNT_ID } from "../state.js";
+import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
 import type { Task } from "../types.js";
 
 export const BalanceTask: Task = {
@@ -17,7 +19,11 @@ export const BalanceTask: Task = {
       return true;
     }
 
-    const player = state.getPlayer(playerId);
+    const accountId = getCommandAccountId(playerId);
+    const player = state.getPlayer(accountId);
+    if (accountId === PROMOTIONAL_ACCOUNT_ID) {
+      state.syncPromotionalAccount(await getCurrentMeat(client));
+    }
     const available = getWithdrawableAssets(player);
     const withdrawal = await prepareWithdrawalReport(player, available);
     const reservedMeat = getReservedOrderMeat(player);
@@ -43,7 +49,9 @@ export const BalanceTask: Task = {
       client,
       playerId,
       [
-        "Your current balance",
+        accountId === playerId
+          ? "Your current balance"
+          : "The bot's promotional balance",
         "",
         ...takeaway,
         "",

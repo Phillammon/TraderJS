@@ -1,10 +1,10 @@
 import { gameData } from "kol.js";
-import { config } from "../config.js";
 import {
   PROMOTIONAL_ACCOUNT_ID,
   type TraderState,
 } from "../state.js";
 import { sendKmailMessage } from "./kmailutils.js";
+import { getCommandAccountId } from "./commandaccount.js";
 import type { Task } from "../types.js";
 
 type CancelResult = {
@@ -59,10 +59,7 @@ export const CancelOrderTask: Task = {
       return true;
     }
 
-    const accountId =
-      request.playerId === config.OPERATOR_ID
-        ? PROMOTIONAL_ACCOUNT_ID
-        : request.playerId;
+    const accountId = getCommandAccountId(request.playerId);
     const result = await cancelOrderForPlayer(state, accountId, request.item);
     await sendKmailMessage(client, request.playerId, result.message);
     if (result.rejectionReason) {

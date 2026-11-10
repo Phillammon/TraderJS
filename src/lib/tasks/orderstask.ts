@@ -1,6 +1,7 @@
 import { getItemName } from "./itemutils.js";
 import { sendKmailMessage } from "./kmailutils.js";
 import { aggregateBuyOrders, getOrderQuantity } from "../orders.js";
+import { getCommandAccountId } from "./commandaccount.js";
 import type { Task } from "../types.js";
 
 export const OrdersTask: Task = {
@@ -12,7 +13,8 @@ export const OrdersTask: Task = {
       return true;
     }
 
-    const ownOrders = state.getPlayer(playerId).orders;
+    const accountId = getCommandAccountId(playerId);
+    const ownOrders = state.getPlayer(accountId).orders;
     const ownLines = await Promise.all(
       [...ownOrders.entries()]
         .filter(([, order]) => order.meat > 0 && order.price > 0)
@@ -25,7 +27,7 @@ export const OrdersTask: Task = {
           ].join("\n");
         }),
     );
-    const aggregatedOrders = aggregateBuyOrders(state.players);
+    const aggregatedOrders = aggregateBuyOrders(state.players, accountId);
     const marketLines = await Promise.all(
       [...aggregatedOrders.entries()].map(async ([itemId, priceLevels]) => {
         const itemName = await getItemName(itemId);
@@ -50,7 +52,9 @@ export const OrdersTask: Task = {
       client,
       playerId,
       [
-        "Your active buy orders:",
+        accountId === playerId
+          ? "Your active buy orders:"
+          : "The bot's promotional buy orders:",
         ownLines.length ? ownLines.join("\n") : "- None",
         "",
         "All active buy orders by item (highest prices first):",

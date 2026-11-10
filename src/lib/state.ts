@@ -266,13 +266,17 @@ export class TraderState {
     return { quantity, allocatedMeat, releasedMeat };
   }
 
-  public unallocatePromotionalAssets(timestamp = new Date()): {
+  public unallocatePromotionalAssets(
+    totalMeat: number,
+    timestamp = new Date(),
+  ): {
     meat: number;
     items: Map<number, number>;
   } {
     if (Number.isNaN(timestamp.getTime())) {
       throw new RangeError("Invalid promotional unallocation timestamp");
     }
+    this.syncPromotionalAccount(totalMeat);
     const account = this.getPlayer(PROMOTIONAL_ACCOUNT_ID);
     const reservedMeat = [...account.orders.values()].reduce(
       (total, order) => total + order.meat,

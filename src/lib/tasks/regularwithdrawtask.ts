@@ -15,7 +15,17 @@ export const RegularWithdrawTask: Task = {
   execute: async (client, state) => {
     for (const [playerId, stored] of state.players) {
       if (playerId === PROMOTIONAL_ACCOUNT_ID) {
-        state.unallocatePromotionalAssets();
+        const totalMeat = (await client.fetchStatus()).meat;
+        if (
+          typeof totalMeat !== "number" ||
+          !Number.isSafeInteger(totalMeat) ||
+          totalMeat < 0
+        ) {
+          throw new TypeError(
+            "Could not determine the bot's current meat balance for unallocation",
+          );
+        }
+        state.unallocatePromotionalAssets(totalMeat);
         state.save();
         continue;
       }
