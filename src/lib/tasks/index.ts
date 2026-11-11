@@ -14,6 +14,7 @@ import { SpamOffChatEffectsTask } from "./spamoffchateffectstask.js";
 import { TraderTask } from "./tradertask.js";
 import type { Task } from "../types.js";
 import { WithdrawTask } from "./withdrawtask.js";
+import { GetClovers, GetWorthless, StockClovers } from "./clovertasks.js";
 
 export {
   BalanceTask,
@@ -40,8 +41,11 @@ export const TraderTasks: Task[] = [
   TraderTask,
   OperatorNotificationsTask,
   DeleteProcessedKmailTask,
-  SpamOffChatEffectsTask,
-  //ChatBeaconTask,
+  GetWorthless,
+  GetClovers,
+  // StockClovers,
+  // SpamOffChatEffectsTask,
+  // ChatBeaconTask,
   PollChatTask,
   LedgerLogTask,
 ];
