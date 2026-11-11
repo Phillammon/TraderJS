@@ -12,7 +12,7 @@ export const ChatBeaconTask: Task = {
     const activeOrders = aggregateBuyOrders(state.players);
     const items = [...activeOrders.entries()];
     let advertisement =
-      "I can help you make buy orders- message me `help` to find out more!";
+      'I can help you make buy orders- message me "help" to find out more!';
     if (items.length > 0) {
       const selectedIndex = Math.floor(Math.random() * items.length);
       const selected = items[selectedIndex];
@@ -30,7 +30,7 @@ export const ChatBeaconTask: Task = {
           `Selected buy order for item ${itemId} has no quantity`,
         );
       }
-      advertisement = `I'm buying ${quantity.toLocaleString()} x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat ${quantity > 1 ? " each" : ""}. Message me \`help\` to find out more about buy orders!`;
+      advertisement = `I'm buying ${quantity.toLocaleString()} x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}. Message me "help" to find out more about buy orders!`;
     }
     await client.chat.macro(`/trade ${advertisement}`);
     state.lastBeacon = Math.floor(
