@@ -13,7 +13,7 @@ export async function findItemByName(name: string): Promise<Item | null> {
   }
 
   const candidates = await gameData.query.find(Item, {
-    name: { $ilike: trimmedName },
+    name: { $like: trimmedName },
   });
   const normalizedName = trimmedName.toLowerCase();
   return (

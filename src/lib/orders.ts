@@ -33,6 +33,28 @@ export function getWithdrawableAssets(player: PlayerState): {
   };
 }
 
+export function getWithdrawableTradeMeat(player: PlayerState): number {
+  const availableMeat = Math.max(
+    0,
+    player.meat - getReservedOrderMeat(player),
+  );
+  let tradeMeat = 0;
+  for (const transaction of player.transactions) {
+    if (transaction.type !== "sold") {
+      continue;
+    }
+    if (
+      !Number.isSafeInteger(transaction.remainingMeat) ||
+      transaction.remainingMeat < 0 ||
+      transaction.remainingMeat > Number.MAX_SAFE_INTEGER - tradeMeat
+    ) {
+      throw new RangeError("Withdrawable trade meat exceeds safe limits");
+    }
+    tradeMeat += transaction.remainingMeat;
+  }
+  return Math.min(availableMeat, tradeMeat);
+}
+
 export function getActiveBuyOrdersForItem(
   players: ReadonlyMap<number, PlayerState>,
   itemId: number,

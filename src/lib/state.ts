@@ -1053,12 +1053,15 @@ export class TraderState {
     meat: number,
     price: number,
     timestamp: Date,
+    additionalSurplusMeat = 0,
   ): number {
     if (
       !Number.isSafeInteger(itemId) ||
       itemId <= 0 ||
       !Number.isSafeInteger(meat) ||
       meat <= 0 ||
+      !Number.isSafeInteger(additionalSurplusMeat) ||
+      additionalSurplusMeat < 0 ||
       !Number.isSafeInteger(price) ||
       price < MIN_BUY_ORDER_PRICE ||
       price > MAX_BUY_ORDER_PRICE ||
@@ -1075,21 +1078,24 @@ export class TraderState {
     if (!Number.isSafeInteger(allocatedMeat) || allocatedMeat > meat) {
       throw new RangeError("Buy order allocation exceeds available meat");
     }
-    if (player.surplusMeat < allocatedMeat) {
+    const existing = player.orders.get(itemId);
+    const releasedMeat = existing?.meat ?? 0;
+    const totalMeat = player.surplusMeat + additionalSurplusMeat;
+    const availableMeat = totalMeat + releasedMeat;
+    if (
+      !Number.isSafeInteger(totalMeat) ||
+      !Number.isSafeInteger(availableMeat) ||
+      additionalSurplusMeat > Number.MAX_SAFE_INTEGER - player.meat
+    ) {
+      throw new RangeError("Available buy order meat exceeds safe limits");
+    }
+    if (availableMeat < allocatedMeat) {
       throw new RangeError(
         `Player ${playerId} does not have enough surplus meat to fund the order`,
       );
     }
-    const existing = player.orders.get(itemId);
-    const releasedMeat = existing?.meat ?? 0;
-    if (
-      releasedMeat >
-      Number.MAX_SAFE_INTEGER - (player.surplusMeat - allocatedMeat)
-    ) {
-      throw new RangeError("Released order meat exceeds the safe integer range");
-    }
-
-    player.surplusMeat += releasedMeat - allocatedMeat;
+    player.meat += additionalSurplusMeat;
+    player.surplusMeat = availableMeat - allocatedMeat;
     player.orders.set(itemId, {
       meat: allocatedMeat,
       price,

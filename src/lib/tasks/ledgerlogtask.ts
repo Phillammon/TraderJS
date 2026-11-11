@@ -20,9 +20,7 @@ export const LedgerLogTask: Task = {
   execute: async (_client, state) => {
     const now = new Date();
     const interval = getLedgerLogInterval();
-    const filename = `ledger-${interval}-${now
-      .toISOString()
-      .replace(/[:.]/g, "-")}.log`;
+    const filename = `ledger-${now.toISOString().replace(/[:.]/g, "-")}.log`;
     const filepath = path.join(config.LEDGER_LOG_DIR, filename);
     const transactions = [...state.pendingAuditTransactions];
     const humanReadableLog = await formatLedgerLog(state, transactions, now);

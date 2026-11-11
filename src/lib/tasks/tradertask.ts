@@ -4,6 +4,7 @@ import { relevantItemsAndEffects } from "../gameconstants.js";
 import { getActiveBuyOrdersForItem, getOrderQuantity } from "../orders.js";
 import { quoteMessage } from "./operator.js";
 import { cancelOrderForPlayer } from "./cancelorder.js";
+import { parseChatCommand } from "./chatcommands.js";
 import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
 import { findItemByName } from "./itemutils.js";
 import {
@@ -94,10 +95,6 @@ function isGiftPackage(itemId: number): boolean {
   );
 }
 
-function hasAssets(message: Kmail): boolean {
-  return message.meat > 0 || message.items.size > 0;
-}
-
 async function processIncomingKmail(
   client: Client,
   message: Kmail,
@@ -108,6 +105,7 @@ async function processIncomingKmail(
     [...message.items].map(([item, quantity]) => [item.id, quantity]),
   );
   const receivedMeat = message.meat;
+  const isAssetless = receivedMeat === 0 && receivedItems.size === 0;
   if (Number.isNaN(message.time.getTime())) {
     const reason = "The kmail had an invalid timestamp.";
     state.recordSurplus(senderId, receivedMeat, receivedItems, new Date());
@@ -144,6 +142,13 @@ async function processIncomingKmail(
         ? { rejectionReason: result.rejectionReason }
         : {}),
     };
+  }
+  if (isAssetless) {
+    const command = parseChatCommand(message.msg);
+    if (command) {
+      state.enqueueChatRequest(command, senderId);
+      return {};
+    }
   }
   if (senderId === config.OPERATOR_ID && message.msg.includes("@")) {
     const attachedAssets =
@@ -234,7 +239,11 @@ async function processIncomingKmail(
         "The kmail contained both meat and non-package items; all attached resources were credited to sender surplus.",
     };
   }
-  if (receivedMeat === 0 && realItems.length === 0) {
+  if (
+    receivedMeat === 0 &&
+    realItems.length === 0 &&
+    !message.msg.includes("@")
+  ) {
     state.recordSurplus(senderId, receivedMeat, receivedItems, message.time);
     return {
       reply: [
@@ -248,39 +257,44 @@ async function processIncomingKmail(
   }
 
   const parsedOrder =
-    receivedMeat > 0
+    receivedMeat > 0 || (realItems.length === 0 && message.msg.includes("@"))
       ? await parseBuyOrder(message.msg).catch((error: unknown) => ({
           ok: false as const,
           reason: `Could not parse the order note: ${error instanceof Error ? error.message : String(error)}`,
         }))
       : undefined;
+  const existingPlayer = state.getPlayer(senderId);
+  const previousOrderMeat = parsedOrder?.ok
+    ? (existingPlayer.orders.get(parsedOrder.item.id)?.meat ?? 0)
+    : 0;
+  const availableOrderMeat = parsedOrder?.ok
+    ? existingPlayer.surplusMeat + receivedMeat + previousOrderMeat
+    : 0;
+  if (parsedOrder?.ok && !Number.isSafeInteger(availableOrderMeat)) {
+    throw new RangeError("Available buy order surplus exceeds safe limits");
+  }
   const requestedMeat =
     parsedOrder?.ok && parsedOrder.quantity !== undefined
       ? parsedOrder.quantity * parsedOrder.price
       : undefined;
   const orderPlan =
     parsedOrder?.ok &&
-    (requestedMeat ?? parsedOrder.price) <= receivedMeat
+    (requestedMeat ?? parsedOrder.price) <= availableOrderMeat
       ? {
           item: parsedOrder.item,
           price: parsedOrder.price,
           quantity:
             parsedOrder.quantity ??
-            Math.floor(receivedMeat / parsedOrder.price),
+            Math.floor(availableOrderMeat / parsedOrder.price),
           allocatedMeat:
             requestedMeat ??
-            Math.floor(receivedMeat / parsedOrder.price) *
+            Math.floor(availableOrderMeat / parsedOrder.price) *
               parsedOrder.price,
         }
       : undefined;
   if (orderPlan) {
-    const previousOrderMeat =
-      state.getPlayer(senderId).orders.get(orderPlan.item.id)?.meat ?? 0;
     const postOrderSurplus =
-      state.getPlayer(senderId).surplusMeat +
-      receivedMeat -
-      orderPlan.allocatedMeat +
-      previousOrderMeat;
+      availableOrderMeat - orderPlan.allocatedMeat;
     if (!Number.isSafeInteger(postOrderSurplus)) {
       throw new RangeError("Buy order surplus exceeds safe limits");
     }
@@ -389,7 +403,7 @@ async function processIncomingKmail(
   }
   state.recordSurplusAudit(senderId, 0, surplusItems, message.time);
 
-  if (receivedMeat <= 0) {
+  if (receivedMeat <= 0 && parsedOrder === undefined) {
     const fulfilledLines = await Promise.all(
       fulfillments.map(async ({ itemId, quantity, price }) => {
         const item = await gameData.findItemById(itemId);
@@ -423,8 +437,12 @@ async function processIncomingKmail(
   if (!parsedOrder.ok) {
     state.recordSurplus(senderId, receivedMeat, new Map(), message.time, false);
     state.recordSurplusAudit(senderId, receivedMeat, new Map(), message.time);
+    const receipt =
+      receivedMeat > 0
+        ? `I have added all ${receivedMeat.toLocaleString()} attached meat to your surplus balance.`
+        : "Your existing surplus remains unchanged.";
     return {
-      reply: `I couldn't create a buy order from your kmail: ${parsedOrder.reason} I have added all ${receivedMeat.toLocaleString()} meat to your surplus balance. ${await formatSurplusBalance(state, senderId)}`,
+      reply: `I couldn't create a buy order from your kmail: ${parsedOrder.reason} ${receipt} ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason: parsedOrder.reason,
     };
   }
@@ -433,12 +451,16 @@ async function processIncomingKmail(
     parsedOrder.quantity === undefined
       ? parsedOrder.price
       : parsedOrder.quantity * parsedOrder.price;
-  if (requiredMeat > receivedMeat) {
+  if (requiredMeat > availableOrderMeat) {
     state.recordSurplus(senderId, receivedMeat, new Map(), message.time, false);
     state.recordSurplusAudit(senderId, receivedMeat, new Map(), message.time);
-    const rejectionReason = `The requested order requires ${requiredMeat.toLocaleString()} meat, but only ${receivedMeat.toLocaleString()} meat was attached.`;
+    const rejectionReason = `The requested order requires ${requiredMeat.toLocaleString()} meat, but only ${availableOrderMeat.toLocaleString()} meat is available from your surplus and this kmail.`;
+    const receipt =
+      receivedMeat > 0
+        ? `All ${receivedMeat.toLocaleString()} attached meat has been added to your surplus balance.`
+        : "Your existing surplus remains unchanged.";
     return {
-      reply: `I couldn't create a buy order for ${parsedOrder.item.name}: the requested order requires ${requiredMeat.toLocaleString()} meat, but you sent ${receivedMeat.toLocaleString()}. All sent meat has been added to your surplus balance. ${await formatSurplusBalance(state, senderId)}`,
+      reply: `I couldn't create a buy order for ${parsedOrder.item.name}: the requested order requires ${requiredMeat.toLocaleString()} meat, but only ${availableOrderMeat.toLocaleString()} meat is available from your surplus and this kmail. ${receipt} ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason,
     };
   }
@@ -446,16 +468,31 @@ async function processIncomingKmail(
   if (!orderPlan) {
     throw new Error("Valid order text did not produce a valid buy order");
   }
-  state.recordSurplus(senderId, receivedMeat, new Map(), message.time, false);
-  const releasedMeat = state.createBuyOrderFromSurplus(
+  let releasedMeat: number;
+  try {
+    releasedMeat = state.createBuyOrderFromSurplus(
+      senderId,
+      orderPlan.item.id,
+      orderPlan.allocatedMeat,
+      orderPlan.price,
+      message.time,
+      receivedMeat,
+    );
+  } catch (error) {
+    state.recordSurplus(senderId, receivedMeat, new Map(), message.time, false);
+    state.recordSurplusAudit(senderId, receivedMeat, new Map(), message.time);
+    throw error;
+  }
+  const surplusMeat = Math.max(
+    0,
+    receivedMeat - orderPlan.allocatedMeat + releasedMeat,
+  );
+  state.recordSurplusAudit(
     senderId,
-    orderPlan.item.id,
-    orderPlan.allocatedMeat,
-    orderPlan.price,
+    surplusMeat,
+    new Map(),
     message.time,
   );
-  const surplusMeat = receivedMeat - orderPlan.allocatedMeat + releasedMeat;
-  state.recordSurplusAudit(senderId, surplusMeat, new Map(), message.time);
   return {
     reply: [
       `Buy order set up: ${orderPlan.quantity.toLocaleString()} x ${orderPlan.item.name} at ${orderPlan.price.toLocaleString()} meat each (${orderPlan.allocatedMeat.toLocaleString()} meat allocated).`,

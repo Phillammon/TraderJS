@@ -1,17 +1,10 @@
 import { config } from "../config.js";
-import type { ChatCommand } from "../state.js";
+import { parseChatCommand } from "./chatcommands.js";
 import {
   queueUnrecognizedChatMessage,
 } from "./operator.js";
 import { sendKmailMessage } from "./kmailutils.js";
 import type { Task } from "../types.js";
-
-const COMMANDS: readonly ChatCommand[] = [
-  "help",
-  "orders",
-  "withdraw",
-  "balance",
-];
 
 export const PollChatTask: Task = {
   name: "Poll Chat",
@@ -40,10 +33,7 @@ export const PollChatTask: Task = {
         );
         continue;
       }
-      const requestedCommand = message.msg.trim().toLowerCase();
-      const command = COMMANDS.find(
-        (supportedCommand) => supportedCommand === requestedCommand,
-      );
+      const command = parseChatCommand(message.msg);
       if (command) {
         state.enqueueChatRequest(command, message.who.id);
       } else {

@@ -1,5 +1,8 @@
 import { config } from "../config.js";
-import { getWithdrawableAssets } from "../orders.js";
+import {
+  getWithdrawableAssets,
+  getWithdrawableTradeMeat,
+} from "../orders.js";
 import { PROMOTIONAL_ACCOUNT_ID } from "../state.js";
 import { sendWithdrawal } from "./withdrawalsupport.js";
 import type { Task } from "../types.js";
@@ -30,6 +33,7 @@ export const RegularWithdrawTask: Task = {
         continue;
       }
       const available = getWithdrawableAssets(stored);
+      available.meat = getWithdrawableTradeMeat(stored);
       if (available.items.size === 0 && available.meat === 0) {
         continue;
       }
