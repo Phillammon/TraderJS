@@ -40,45 +40,58 @@ export const WithdrawTask: Task = {
       state.save();
       return true;
     }
-    const available = getWithdrawableAssets(stored);
-    if (available.items.size === 0 && available.meat === 0) {
-      await sendKmailMessage(
-        client,
-        playerId,
-        "I can't currently send you anything. Your stored items and meat are either empty or reserved for active buy orders.",
-      );
-      state.completeChatRequest("withdraw", playerId);
-      state.save();
-      return true;
-    }
-
     const recipient = await client.players.fetch(playerId);
     if (!recipient) {
       await sendKmailMessage(
         client,
         playerId,
-        "I couldn't verify that your account can receive items right now, so I haven't sent your stored assets. Please try again later.",
+        "I couldn't verify your account right now, so I haven't sent your stored assets. Please try again later.",
       );
       state.completeChatRequest("withdraw", playerId);
       state.save();
       return true;
     }
 
-    const usesGiftPackages =
-      recipient.inHardcore ||
-      recipient.inRonin ||
-      recipient.path === "Legacy of Loathing";
+    const usesGiftPackages = recipient.inHardcore || recipient.inRonin;
     if (usesGiftPackages) {
       await sendKmailMessage(
         client,
         playerId,
-        "I can't send your stored assets while your account is in Hardcore, Ronin, or Legacy of Loathing. Please message me `withdraw` again when you are no longer in that state.",
+        "I can't send your stored assets while your account is in Hardcore or Ronin. Please message me `withdraw` again when you are no longer in that state.",
       );
       state.completeChatRequest("withdraw", playerId);
       state.save();
       return true;
     }
 
+    const available = getWithdrawableAssets(stored);
+    if (recipient.path === "Legacy of Loathing") {
+      available.items.clear();
+    }
+    if (available.items.size === 0 && available.meat === 0) {
+      await sendKmailMessage(
+        client,
+        playerId,
+        recipient.path === "Legacy of Loathing" && stored.items.size > 0
+          ? "I can't send you items while you are in Legacy of Loathing, and you have no withdrawable meat right now."
+          : "I can't currently send you anything. Your stored items and meat are either empty or reserved for active buy orders.",
+      );
+      state.completeChatRequest("withdraw", playerId);
+      state.save();
+      return true;
+    }
+
+    if (
+      recipient.path === "Legacy of Loathing" &&
+      available.items.size > 0 &&
+      available.meat > 0
+    ) {
+      await sendKmailMessage(
+        client,
+        playerId,
+        "I'll send your available meat now. Your stored items will remain in your balance until your account can receive items.",
+      );
+    }
     await sendWithdrawal(client, playerId, available, stored, state);
     state.completeChatRequest("withdraw", playerId);
     state.save();

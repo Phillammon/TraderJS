@@ -46,10 +46,16 @@ export const RegularWithdrawTask: Task = {
       }
       if (
         recipient.inHardcore ||
-        recipient.inRonin ||
-        recipient.path === "Legacy of Loathing"
+        recipient.inRonin
       ) {
         continue;
+      }
+
+      if (recipient.path === "Legacy of Loathing") {
+        available.items.clear();
+        if (available.meat === 0) {
+          continue;
+        }
       }
 
       await sendWithdrawal(client, playerId, available, stored, state);

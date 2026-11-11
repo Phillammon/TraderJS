@@ -338,10 +338,7 @@ async function processIncomingKmail(
   validateFulfillments(senderId, receivedMeat, fulfillments, state);
   const saleProceeds = fulfillments
     .filter(({ buyerId }) => buyerId !== senderId)
-    .reduce(
-      (total, { quantity, price }) => total + quantity * price,
-      0,
-    );
+    .reduce((total, { quantity, price }) => total + quantity * price, 0);
   if (!Number.isSafeInteger(saleProceeds)) {
     throw new RangeError("Fulfillment proceeds exceed safe limits");
   }
@@ -410,19 +407,19 @@ async function processIncomingKmail(
     saleProceeds > 0 || returnableSurplusItems.size > 0
       ? await client.players.fetch(senderId)
       : undefined;
-  const canSendProceeds =
-    !!seller &&
-    !seller.inHardcore &&
-    !seller.inRonin &&
-    seller.path !== "Legacy of Loathing";
+  const canSendMeat = !!seller && !seller.inHardcore && !seller.inRonin;
+  const canSendItems = canSendMeat && seller?.path !== "Legacy of Loathing";
   if (
-    canSendProceeds &&
-    (saleProceeds > 0 || returnableSurplusItems.size > 0)
+    (canSendMeat && saleProceeds > 0) ||
+    (canSendItems && returnableSurplusItems.size > 0)
   ) {
     await sendWithdrawal(
       client,
       senderId,
-      { meat: saleProceeds, items: returnableSurplusItems },
+      {
+        meat: canSendMeat ? saleProceeds : 0,
+        items: canSendItems ? returnableSurplusItems : new Map(),
+      },
       state.getPlayer(senderId),
       state,
       true,
@@ -439,7 +436,7 @@ async function processIncomingKmail(
     const surplusLines = await Promise.all(
       [...surplusItems].map(async ([itemId, quantity]) => {
         const item = await gameData.findItemById(itemId);
-        return `- ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} ${canSendProceeds ? "returned to you" : "added to surplus"}.`;
+        return `- ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} ${canSendItems ? "returned to you" : "added to surplus"}.`;
       }),
     );
     return {
@@ -449,20 +446,20 @@ async function processIncomingKmail(
         "Fulfilled buy orders:",
         fulfilledLines.length > 0 ? fulfilledLines.join("\n") : "- None",
         "",
-        canSendProceeds
-          ? "Surplus items returned:"
-          : "Items added to surplus:",
+        canSendItems ? "Surplus items returned:" : "Items added to surplus:",
         surplusLines.length > 0 ? surplusLines.join("\n") : "- None",
         ...(saleProceeds > 0
           ? [
-              canSendProceeds
+              canSendMeat
                 ? `Sent ${saleProceeds.toLocaleString()} meat directly from fulfilled buy orders.`
-                : `${saleProceeds.toLocaleString()} meat from fulfilled buy orders is held in your balance because your account cannot currently receive it.`,
+                : `${saleProceeds.toLocaleString()} meat from fulfilled buy orders is held in your balance because your account cannot currently receive meat.`,
             ]
           : []),
-        ...(returnableSurplusItems.size > 0 && !canSendProceeds
+        ...(returnableSurplusItems.size > 0 && !canSendItems
           ? [
-              "Your items remain stored because your account cannot currently receive them.",
+              seller?.path === "Legacy of Loathing"
+                ? "Surplus items remain stored because Legacy of Loathing accounts cannot receive items."
+                : "Your items remain stored because your account cannot currently receive them.",
             ]
           : []),
         "",

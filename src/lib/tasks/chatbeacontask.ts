@@ -14,26 +14,31 @@ export const ChatBeaconTask: Task = {
     }
 
     const activeOrders = aggregateBuyOrders(state.players);
-    const items = [...activeOrders.entries()];
-    let advertisement =
-      'I can help you make buy orders- message me "help" to find out more!';
-    if (items.length > 0) {
-      const selectedIndex = Math.floor(Math.random() * items.length);
-      const selected = items[selectedIndex];
-      if (!selected) {
-        throw new Error("Could not select an active buy order for Chat Beacon");
-      }
-      const [itemId, priceLevels] = selected;
-      const highestPrice = [...priceLevels.keys()].reduce(
-        (highest, price) => Math.max(highest, price),
-        0,
-      );
+    const orders = [...activeOrders.entries()].map(([itemId, priceLevels]) => {
+      const highestPrice = Math.max(...priceLevels.keys());
       const quantity = priceLevels.get(highestPrice);
       if (quantity === undefined) {
         throw new Error(
           `Selected buy order for item ${itemId} has no quantity`,
         );
       }
+      return { itemId, highestPrice, quantity };
+    });
+    const preferredOrders =
+      orders.filter((order) => order.highestPrice > 1000).length > 0
+        ? orders.filter((order) => order.highestPrice > 1000)
+        : orders.filter((order) => order.highestPrice > 150);
+    const advertisedOrders =
+      preferredOrders.length > 0 ? preferredOrders : orders;
+    let advertisement =
+      'I can help you make buy orders- message me "help" to find out more!';
+    if (advertisedOrders.length > 0) {
+      const selectedIndex = Math.floor(Math.random() * advertisedOrders.length);
+      const selected = advertisedOrders[selectedIndex];
+      if (!selected) {
+        throw new Error("Could not select an active buy order for Chat Beacon");
+      }
+      const { itemId, highestPrice, quantity } = selected;
       advertisement = `I'm buying ${quantity.toLocaleString()} x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}. Message me "help" to find out more about buy orders!`;
     }
     await client.chat.macro(`/trade ${advertisement}`);
