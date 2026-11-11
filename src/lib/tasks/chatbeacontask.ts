@@ -6,9 +6,13 @@ import type { Task } from "../types.js";
 export const ChatBeaconTask: Task = {
   name: "Announce In Chat",
   done: async (_client, state) =>
-    state.lastBeacon ===
-    Math.floor(Date.now() / (1000 * config.TRADE_BEACON_DELAY)),
+    Date.now() - state.lastBeacon < config.TRADE_BEACON_DELAY * 1000,
   execute: async (client, state) => {
+    const now = Date.now();
+    if (now - state.lastBeacon < config.TRADE_BEACON_DELAY * 1000) {
+      return true;
+    }
+
     const activeOrders = aggregateBuyOrders(state.players);
     const items = [...activeOrders.entries()];
     let advertisement =
@@ -33,9 +37,7 @@ export const ChatBeaconTask: Task = {
       advertisement = `I'm buying ${quantity.toLocaleString()} x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}. Message me "help" to find out more about buy orders!`;
     }
     await client.chat.macro(`/trade ${advertisement}`);
-    state.lastBeacon = Math.floor(
-      Date.now() / (1000 * config.TRADE_BEACON_DELAY),
-    );
+    state.lastBeacon = Date.now();
     return true;
   },
 };

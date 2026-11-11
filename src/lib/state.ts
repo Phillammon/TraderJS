@@ -362,7 +362,10 @@ export class TraderState {
       ) {
         throw new TypeError(`Invalid beacon state: ${this.stateFile}`);
       }
-      this.lastBeacon = stored.lastBeacon;
+      this.lastBeacon =
+        stored.lastBeacon < 1_000_000_000_000
+          ? this.currentBeacon()
+          : stored.lastBeacon;
     }
     if (stored.lastChatPoll !== undefined) {
       if (
@@ -1209,7 +1212,7 @@ export class TraderState {
   }
 
   private currentBeacon(): number {
-    return Math.floor(Date.now() / (1000 * config.TRADE_BEACON_DELAY));
+    return Date.now();
   }
 
   private queueFor(command: ChatCommand): number[] {

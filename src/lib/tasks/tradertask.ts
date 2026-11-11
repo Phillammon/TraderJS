@@ -102,7 +102,9 @@ async function processIncomingKmail(
 ): Promise<KmailProcessingResult> {
   const senderId = message.who.id;
   const receivedItems = new Map(
-    [...message.items].map(([item, quantity]) => [item.id, quantity]),
+    [...message.items]
+      .filter(([item]) => !isGiftPackage(item.id))
+      .map(([item, quantity]) => [item.id, quantity]),
   );
   const receivedMeat = message.meat;
   const isAssetless = receivedMeat === 0 && receivedItems.size === 0;
