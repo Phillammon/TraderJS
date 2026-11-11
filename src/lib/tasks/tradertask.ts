@@ -452,7 +452,7 @@ async function processIncomingKmail(
           ? [
               canSendMeat
                 ? `Sent ${saleProceeds.toLocaleString()} meat directly from fulfilled buy orders.`
-                : `${saleProceeds.toLocaleString()} meat from fulfilled buy orders is held in your balance because your account cannot currently receive meat.`,
+                : `${saleProceeds.toLocaleString()} meat from fulfilled buy orders is held in your balance because your account cannot currently receive meat. Message me "withdraw" once you're out of ${seller?.inHardcore ? "Hardcore" : "Ronin"}.`,
             ]
           : []),
         ...(returnableSurplusItems.size > 0 && !canSendItems
