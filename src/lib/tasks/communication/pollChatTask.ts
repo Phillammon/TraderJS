@@ -1,10 +1,9 @@
-import { config } from "../config.js";
-import { parseChatCommand } from "./chatcommands.js";
-import {
-  queueUnrecognizedChatMessage,
-} from "./operator.js";
-import { sendKmailMessage } from "./kmailutils.js";
-import type { Task } from "../types.js";
+import { createHash } from "node:crypto";
+import { config } from "../../config.js";
+import { parseChatCommand } from "./chatCommands.js";
+import { queueUnrecognizedChatMessage } from "./operator.js";
+import { sendKmailMessage } from "./kmailUtils.js";
+import type { Task } from "../../types.js";
 
 export const PollChatTask: Task = {
   name: "Poll Chat",
@@ -16,9 +15,30 @@ export const PollChatTask: Task = {
       if (message.type !== "private") {
         continue;
       }
+      state.setPlayerName(message.who.id, message.who.name);
+      if (message.msg.includes("@")) {
+        const timestamp = Number.isNaN(message.time.getTime())
+          ? "invalid timestamp"
+          : message.time.toISOString();
+        const id = createHash("sha256")
+          .update(JSON.stringify([message.who.id, timestamp, message.msg]))
+          .digest("hex");
+        state.enqueueChatBuyOrder({
+          id,
+          playerId: message.who.id,
+          playerName: message.who.name,
+          message: message.msg,
+          timestamp,
+        });
+        continue;
+      }
       const cancelMatch = /^cancel\s+(.+)$/i.exec(message.msg.trim());
       if (cancelMatch) {
-        state.enqueueCancelRequest(message.who.id, cancelMatch[1]!);
+        state.enqueueCancelRequest(
+          message.who.id,
+          cancelMatch[1]!,
+          message.who.name,
+        );
         continue;
       }
       if (/^cancel$/i.test(message.msg.trim())) {

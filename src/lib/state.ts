@@ -12,6 +12,7 @@ export type BuyOrder = {
 };
 
 export type PlayerState = {
+  name?: string;
   orders: Map<number, BuyOrder>;
   meat: number;
   items: Map<number, number>;
@@ -103,6 +104,7 @@ export type AuditTransaction =
     };
 
 type StoredPlayerState = {
+  name?: string;
   orders: Record<string, BuyOrder>;
   meat: number;
   items: Record<string, number>;
@@ -117,6 +119,15 @@ type PendingKmailReply = {
   items?: Record<string, number>;
 };
 
+export type KmailAction = "create" | "fulfill";
+export type ChatBuyOrderRequest = {
+  id: string;
+  playerId: number;
+  playerName: string;
+  message: string;
+  timestamp: string;
+};
+
 type StoredState = {
   players: Record<string, StoredPlayerState>;
   lastBeacon?: number;
@@ -125,14 +136,22 @@ type StoredState = {
   lastLedgerLogInterval?: number;
   pendingAuditTransactions?: AuditTransaction[];
   processedKmailIds?: number[];
+  pendingKmailActions?: Record<string, KmailAction>;
+  pendingChatBuyOrders?: Record<string, ChatBuyOrderRequest>;
+  seenChatBuyOrderIds?: string[];
+  pendingChatReplies?: Record<string, { playerId: number; message: string }>;
   pendingKmailReplies?: Record<string, PendingKmailReply>;
   pendingOperatorNotifications?: Record<string, string>;
-  cancelQueue?: { playerId: number; item: string }[];
+  cancelQueue?: { playerId: number; playerName?: string; item: string }[];
   chatQueues?: Record<ChatCommand, number[]>;
 };
 
 export type ChatCommand = "help" | "orders" | "withdraw" | "balance";
-export type CancelRequest = { playerId: number; item: string };
+export type CancelRequest = {
+  playerId: number;
+  playerName?: string;
+  item: string;
+};
 
 export class TraderState {
   public players = new Map<number, PlayerState>();
@@ -142,10 +161,10 @@ export class TraderState {
   public lastLedgerLogInterval = -1;
   public pendingAuditTransactions: AuditTransaction[] = [];
   public readonly processedKmailIds = new Set<number>();
-  public readonly pendingKmailReplies = new Map<
-    number,
-    PendingKmailReply
-  >();
+  public readonly pendingKmailActions = new Map<number, KmailAction>();
+  public readonly pendingChatBuyOrders = new Map<string, ChatBuyOrderRequest>();
+  public readonly seenChatBuyOrderIds = new Set<string>();
+  public readonly pendingKmailReplies = new Map<string, PendingKmailReply>();
   public readonly pendingOperatorNotifications = new Map<string, string>();
   public readonly cancelQueue: CancelRequest[] = [];
   public readonly helpQueue: number[] = [];
@@ -186,6 +205,21 @@ export class TraderState {
     }
 
     return player;
+  }
+
+  public setPlayerName(playerId: number, name: string): void {
+    if (typeof name !== "string" || !name.trim()) {
+      throw new TypeError(`Invalid player name for player ${playerId}`);
+    }
+    this.getPlayer(playerId).name = name.trim();
+  }
+
+  public getPlayerLabel(playerId: number): string {
+    if (playerId === PROMOTIONAL_ACCOUNT_ID) {
+      return "PROMOTIONAL (bot-owned)";
+    }
+    const name = this.getPlayer(playerId).name ?? "Unknown player";
+    return `${name} (Player ${playerId})`;
   }
 
   public getOwnedMeat(totalMeat: number): number {
@@ -349,6 +383,9 @@ export class TraderState {
     this.lastLedgerLogInterval = -1;
     this.pendingAuditTransactions.length = 0;
     this.processedKmailIds.clear();
+    this.pendingKmailActions.clear();
+    this.pendingChatBuyOrders.clear();
+    this.seenChatBuyOrderIds.clear();
     this.pendingKmailReplies.clear();
     this.pendingOperatorNotifications.clear();
     this.cancelQueue.length = 0;
@@ -417,14 +454,86 @@ export class TraderState {
         this.processedKmailIds.add(id);
       }
     }
+    if (stored.pendingKmailActions !== undefined) {
+      if (!isRecord(stored.pendingKmailActions)) {
+        throw new TypeError(`Invalid pending kmail actions: ${this.stateFile}`);
+      }
+      for (const [kmailIdText, action] of Object.entries(
+        stored.pendingKmailActions,
+      )) {
+        const kmailId = parseId(kmailIdText, "kmail");
+        if (action !== "create" && action !== "fulfill") {
+          throw new TypeError(`Invalid pending action for kmail ${kmailId}`);
+        }
+        this.pendingKmailActions.set(kmailId, action);
+      }
+    }
+    if (stored.pendingChatBuyOrders !== undefined) {
+      if (!isRecord(stored.pendingChatBuyOrders)) {
+        throw new TypeError(`Invalid pending chat buy orders: ${this.stateFile}`);
+      }
+      for (const [id, request] of Object.entries(stored.pendingChatBuyOrders)) {
+        if (
+          !isRecord(request) ||
+          request.id !== id ||
+          typeof request.playerId !== "number" ||
+          !Number.isSafeInteger(request.playerId) ||
+          request.playerId <= 0 ||
+          typeof request.playerName !== "string" ||
+          typeof request.message !== "string" ||
+          typeof request.timestamp !== "string"
+        ) {
+          throw new TypeError(`Invalid pending chat buy order ${id}`);
+        }
+        this.pendingChatBuyOrders.set(id, {
+          id,
+          playerId: request.playerId,
+          playerName: request.playerName,
+          message: request.message,
+          timestamp: request.timestamp,
+        });
+      }
+    }
+    if (stored.seenChatBuyOrderIds !== undefined) {
+      if (!Array.isArray(stored.seenChatBuyOrderIds)) {
+        throw new TypeError(`Invalid seen chat buy order ids: ${this.stateFile}`);
+      }
+      for (const id of stored.seenChatBuyOrderIds) {
+        if (typeof id !== "string" || !id) {
+          throw new TypeError(`Invalid seen chat buy order id: ${this.stateFile}`);
+        }
+        this.seenChatBuyOrderIds.add(id);
+      }
+    }
+    if (stored.pendingChatReplies !== undefined) {
+      if (!isRecord(stored.pendingChatReplies)) {
+        throw new TypeError(`Invalid pending chat replies: ${this.stateFile}`);
+      }
+      for (const [id, reply] of Object.entries(stored.pendingChatReplies)) {
+        if (
+          !id ||
+          !isRecord(reply) ||
+          typeof reply.playerId !== "number" ||
+          !Number.isSafeInteger(reply.playerId) ||
+          reply.playerId <= 0 ||
+          typeof reply.message !== "string"
+        ) {
+          throw new TypeError(`Invalid pending chat reply ${id}`);
+        }
+        this.pendingKmailReplies.set(`chat-order:${id}`, {
+          playerId: reply.playerId,
+          message: reply.message,
+        });
+      }
+    }
     if (stored.pendingKmailReplies !== undefined) {
       if (!isRecord(stored.pendingKmailReplies)) {
         throw new TypeError(`Invalid pending kmail replies: ${this.stateFile}`);
       }
-      for (const [kmailIdText, reply] of Object.entries(
-        stored.pendingKmailReplies,
-      )) {
-        const kmailId = parseId(kmailIdText, "kmail");
+      for (const [replyId, reply] of Object.entries(stored.pendingKmailReplies)) {
+        if (!/^(?:[1-9]\d*|chat-order:[a-f\d]{64})$/.test(replyId)) {
+          throw new TypeError(`Invalid pending kmail reply id ${replyId}`);
+        }
         if (
           !isRecord(reply) ||
           typeof reply.playerId !== "number" ||
@@ -432,7 +541,7 @@ export class TraderState {
           reply.playerId <= 0 ||
           typeof reply.message !== "string"
         ) {
-          throw new TypeError(`Invalid pending kmail reply ${kmailId}`);
+          throw new TypeError(`Invalid pending kmail reply ${replyId}`);
         }
         const pendingReply: PendingKmailReply = {
           playerId: reply.playerId,
@@ -440,7 +549,7 @@ export class TraderState {
         };
         if (reply.items !== undefined) {
           if (!isRecord(reply.items)) {
-            throw new TypeError(`Invalid attached items for kmail reply ${kmailId}`);
+            throw new TypeError(`Invalid attached items for kmail reply ${replyId}`);
           }
           const items: Record<string, number> = {};
           for (const [itemIdText, quantity] of Object.entries(reply.items)) {
@@ -451,14 +560,14 @@ export class TraderState {
               quantity <= 0
             ) {
               throw new TypeError(
-                `Invalid attached item quantity for kmail reply ${kmailId}`,
+                `Invalid attached item quantity for kmail reply ${replyId}`,
               );
             }
             items[String(itemId)] = quantity;
           }
           pendingReply.items = items;
         }
-        this.pendingKmailReplies.set(kmailId, pendingReply);
+        this.pendingKmailReplies.set(replyId, pendingReply);
       }
     }
     if (stored.pendingOperatorNotifications !== undefined) {
@@ -488,12 +597,17 @@ export class TraderState {
           typeof request.playerId !== "number" ||
           !Number.isSafeInteger(request.playerId) ||
           request.playerId <= 0 ||
-          typeof request.item !== "string"
+          typeof request.item !== "string" ||
+          (request.playerName !== undefined &&
+            typeof request.playerName !== "string")
         ) {
           throw new TypeError(`Invalid cancel queue entry: ${this.stateFile}`);
         }
         this.cancelQueue.push({
           playerId: request.playerId,
+          ...(typeof request.playerName === "string"
+            ? { playerName: request.playerName }
+            : {}),
           item: request.item,
         });
       }
@@ -530,6 +644,8 @@ export class TraderState {
           : parseId(playerIdText, "player");
       if (
         !isRecord(player) ||
+        (player.name !== undefined &&
+          (typeof player.name !== "string" || !player.name.trim())) ||
         typeof player.meat !== "number" ||
         !isNonNegativeFinite(player.meat) ||
         !isRecord(player.orders) ||
@@ -606,6 +722,7 @@ export class TraderState {
 
       const transactions = parseTransactions(player.transactions, playerId);
       this.players.set(playerId, {
+        ...(typeof player.name === "string" ? { name: player.name } : {}),
         orders,
         meat: player.meat,
         items,
@@ -620,6 +737,7 @@ export class TraderState {
     const players: StoredState["players"] = {};
     for (const [playerId, player] of this.players) {
       players[playerId] = {
+        ...(player.name ? { name: player.name } : {}),
         orders: Object.fromEntries(player.orders),
         meat: player.meat,
         items: Object.fromEntries(player.items),
@@ -640,6 +758,9 @@ export class TraderState {
           lastLedgerLogInterval: this.lastLedgerLogInterval,
           pendingAuditTransactions: this.pendingAuditTransactions,
           processedKmailIds: [...this.processedKmailIds],
+          pendingKmailActions: Object.fromEntries(this.pendingKmailActions),
+          pendingChatBuyOrders: Object.fromEntries(this.pendingChatBuyOrders),
+          seenChatBuyOrderIds: [...this.seenChatBuyOrderIds],
           pendingKmailReplies: Object.fromEntries(this.pendingKmailReplies),
           pendingOperatorNotifications: Object.fromEntries(
             this.pendingOperatorNotifications,
@@ -666,16 +787,25 @@ export class TraderState {
     this.queueFor(command).push(playerId);
   }
 
-  public enqueueCancelRequest(playerId: number, item: string): void {
+  public enqueueCancelRequest(
+    playerId: number,
+    item: string,
+    playerName?: string,
+  ): void {
     if (
       !Number.isSafeInteger(playerId) ||
       playerId <= 0 ||
       typeof item !== "string" ||
-      !item.trim()
+      !item.trim() ||
+      (playerName !== undefined && typeof playerName !== "string")
     ) {
       throw new TypeError("Invalid cancel request");
     }
-    this.cancelQueue.push({ playerId, item: item.trim() });
+    this.cancelQueue.push({
+      playerId,
+      ...(playerName?.trim() ? { playerName: playerName.trim() } : {}),
+      item: item.trim(),
+    });
   }
 
   public completeCancelRequest(request: CancelRequest): void {
@@ -1071,12 +1201,79 @@ export class TraderState {
     }
     this.processedKmailIds.add(kmailId);
     if (reply) {
-      this.pendingKmailReplies.set(kmailId, reply);
+      this.pendingKmailReplies.set(String(kmailId), reply);
     }
   }
 
-  public completeKmailReply(kmailId: number): void {
-    this.pendingKmailReplies.delete(kmailId);
+  public queueKmailAction(kmailId: number, action: KmailAction): void {
+    if (
+      !Number.isSafeInteger(kmailId) ||
+      kmailId <= 0 ||
+      (action !== "create" && action !== "fulfill")
+    ) {
+      throw new TypeError("Invalid pending kmail action");
+    }
+    const existing = this.pendingKmailActions.get(kmailId);
+    if (existing && existing !== action) {
+      throw new Error(`Kmail ${kmailId} already has a different pending action`);
+    }
+    this.pendingKmailActions.set(kmailId, action);
+  }
+
+  public completeKmailAction(kmailId: number): void {
+    this.pendingKmailActions.delete(kmailId);
+  }
+
+  public enqueueChatBuyOrder(request: ChatBuyOrderRequest): void {
+    if (
+      !request.id ||
+      !Number.isSafeInteger(request.playerId) ||
+      request.playerId <= 0 ||
+      typeof request.playerName !== "string" ||
+      typeof request.message !== "string" ||
+      typeof request.timestamp !== "string"
+    ) {
+      throw new TypeError("Invalid chat buy order request");
+    }
+    if (this.seenChatBuyOrderIds.has(request.id)) {
+      return;
+    }
+    this.seenChatBuyOrderIds.add(request.id);
+    this.pendingChatBuyOrders.set(request.id, request);
+    while (this.seenChatBuyOrderIds.size > 1000) {
+      const oldestId = [...this.seenChatBuyOrderIds].find(
+        (id) =>
+          !this.pendingChatBuyOrders.has(id) &&
+          !this.pendingKmailReplies.has(`chat-order:${id}`),
+      );
+      if (oldestId === undefined) {
+        break;
+      }
+      this.seenChatBuyOrderIds.delete(oldestId);
+    }
+  }
+
+  public completeChatBuyOrder(id: string): void {
+    this.pendingChatBuyOrders.delete(id);
+  }
+
+  public queueKmailReply(
+    id: string,
+    reply: { playerId: number; message: string },
+  ): void {
+    if (
+      !id ||
+      !Number.isSafeInteger(reply.playerId) ||
+      reply.playerId <= 0 ||
+      typeof reply.message !== "string"
+    ) {
+      throw new TypeError("Invalid kmail reply");
+    }
+    this.pendingKmailReplies.set(id, reply);
+  }
+
+  public completeKmailReply(kmailId: number | string): void {
+    this.pendingKmailReplies.delete(String(kmailId));
   }
 
   public queueOperatorNotification(id: string, message: string): void {

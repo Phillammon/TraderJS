@@ -1,7 +1,7 @@
-import { config } from "../config.js";
-import { getItemName } from "./itemutils.js";
-import { aggregateBuyOrders } from "../orders.js";
-import type { Task } from "../types.js";
+import { config } from "../../config.js";
+import { getItemName } from "../shared/itemUtils.js";
+import { aggregateBuyOrders } from "../../orders.js";
+import type { Task } from "../../types.js";
 
 export const ChatBeaconTask: Task = {
   name: "Announce In Chat",
@@ -39,7 +39,7 @@ export const ChatBeaconTask: Task = {
         throw new Error("Could not select an active buy order for Chat Beacon");
       }
       const { itemId, highestPrice, quantity } = selected;
-      advertisement = `I'm buying ${quantity.toLocaleString()} x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}. Message me "help" to find out more about buy orders!`;
+      advertisement = `I'm buying ${quantity.toLocaleString()}x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}. Message me "help" to find out more about buy orders!`;
     }
     await client.chat.macro(`/trade ${advertisement}`);
     state.lastBeacon = Date.now();

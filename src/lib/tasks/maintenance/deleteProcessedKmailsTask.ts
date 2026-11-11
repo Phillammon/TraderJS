@@ -1,4 +1,4 @@
-import type { Task } from "../types.js";
+import type { Task } from "../../types.js";
 
 export const DeleteProcessedKmailTask: Task = {
   name: "Delete Processed Kmails",
@@ -7,7 +7,7 @@ export const DeleteProcessedKmailTask: Task = {
     return !messages.some(
       (message) =>
         state.processedKmailIds.has(message.id) &&
-        !state.pendingKmailReplies.has(message.id),
+        !state.pendingKmailReplies.has(String(message.id)),
     );
   },
   execute: async (client, state) => {
@@ -16,7 +16,7 @@ export const DeleteProcessedKmailTask: Task = {
       .filter(
         (message) =>
           state.processedKmailIds.has(message.id) &&
-          !state.pendingKmailReplies.has(message.id),
+          !state.pendingKmailReplies.has(String(message.id)),
       )
       .map((message) => message.id);
 

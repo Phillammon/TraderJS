@@ -1,17 +1,17 @@
-import { config } from "../config.js";
+import { config } from "../../config.js";
 import {
   getWithdrawableAssets,
   getWithdrawableTradeMeat,
-} from "../orders.js";
-import { PROMOTIONAL_ACCOUNT_ID } from "../state.js";
-import { sendWithdrawal } from "./withdrawalsupport.js";
-import type { Task } from "../types.js";
+} from "../../orders.js";
+import { PROMOTIONAL_ACCOUNT_ID } from "../../state.js";
+import { sendWithdrawal } from "./withdrawalSupport.js";
+import type { Task } from "../../types.js";
 
 function getWithdrawalInterval(): number {
   return Math.floor(Date.now() / (1000 * config.WITHDRAWAL_DELAY));
 }
 
-export const RegularWithdrawTask: Task = {
+export const RegularWithdrawalTask: Task = {
   name: "Regular Withdrawals",
   done: async (_client, state) =>
     state.lastWithdrawalInterval === getWithdrawalInterval(),
@@ -44,10 +44,7 @@ export const RegularWithdrawTask: Task = {
           `Could not verify player ${playerId} for regular withdrawal`,
         );
       }
-      if (
-        recipient.inHardcore ||
-        recipient.inRonin
-      ) {
+      if (recipient.inHardcore || recipient.inRonin) {
         continue;
       }
 

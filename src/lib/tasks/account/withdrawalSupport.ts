@@ -4,9 +4,9 @@ import type {
   PlayerState,
   TradeTransaction,
   TraderState,
-} from "../state.js";
-import { getItemName } from "./itemutils.js";
-import { sendKmailMessage } from "./kmailutils.js";
+} from "../../state.js";
+import { getItemName } from "../shared/itemUtils.js";
+import { sendKmailMessage } from "../communication/kmailUtils.js";
 
 type TransactionAllocation = {
   transaction: TradeTransaction;
@@ -44,10 +44,14 @@ export async function sendWithdrawal(
   for (const [index, itemBatch] of itemBatches.entries()) {
     const batchItems = new Map(itemBatch);
     const batchMeat = index === 0 ? available.meat : 0;
-    const report = await prepareWithdrawalReport(stored, {
-      meat: batchMeat,
-      items: batchItems,
-    }, preferSurplusItems);
+    const report = await prepareWithdrawalReport(
+      stored,
+      {
+        meat: batchMeat,
+        items: batchItems,
+      },
+      preferSurplusItems,
+    );
     const items = await resolveItems(batchItems);
     const message =
       itemBatches.length > 1
@@ -137,8 +141,7 @@ export async function prepareWithdrawalReport(
       continue;
     }
     const surplusQuantity =
-      (stored.surplusItems.get(itemId) ?? 0) -
-      (surplusItems.get(itemId) ?? 0);
+      (stored.surplusItems.get(itemId) ?? 0) - (surplusItems.get(itemId) ?? 0);
     if (quantity > surplusQuantity) {
       throw new Error(
         `${quantity} withdrawable item(s) for item ${itemId} exceed recorded surplus`,

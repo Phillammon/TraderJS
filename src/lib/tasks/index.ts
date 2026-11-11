@@ -1,20 +1,26 @@
-import { BalanceTask } from "./balancetask.js";
-import { CancelOrderTask } from "./cancelorder.js";
-import { ChatBeaconTask } from "./chatbeacontask.js";
-import { DeleteProcessedKmailTask } from "./deleteprocessedkmailtask.js";
-import { HelpTask } from "./helptask.js";
-import { LedgerLogTask } from "./ledgerlogtask.js";
-import { OpenGiftPackagesTask } from "./opengiftpackagestask.js";
-import { OperatorNotificationsTask } from "./operator.js";
-import { OrdersTask } from "./orderstask.js";
-import { PollChatTask } from "./pollchattask.js";
-import { RegularWithdrawTask } from "./regularwithdrawtask.js";
-import { KmailRepliesTask } from "./replytask.js";
-import { SpamOffChatEffectsTask } from "./spamoffchateffectstask.js";
-import { TraderTask } from "./tradertask.js";
+import { BalanceTask } from "./account/balanceTask.js";
+import { RegularWithdrawalTask } from "./account/regularWithdrawalTask.js";
+import { WithdrawTask } from "./account/withdrawTask.js";
+import { ChatBeaconTask } from "./communication/chatBeaconTask.js";
+import { HelpTask } from "./communication/helpTask.js";
+import { OperatorNotificationsTask } from "./communication/operator.js";
+import { PollChatTask } from "./communication/pollChatTask.js";
+import { KmailRepliesTask } from "./communication/replyTask.js";
+import { DeleteProcessedKmailTask } from "./maintenance/deleteProcessedKmailsTask.js";
+import { LedgerLogTask } from "./maintenance/ledgerLogTask.js";
+import { OpenGiftPackagesTask } from "./maintenance/openGiftPackagesTask.js";
+import { SpamOffChatEffectsTask } from "./maintenance/spamOffChatEffectsTask.js";
+import {
+  GetClovers,
+  GetWorthless,
+  StockClovers,
+} from "./maintenance/cloverTasks.js";
+import { CancelOrderTask } from "./trading/cancelOrder.js";
+import { CreateBuyOrderTask } from "./trading/createBuyOrderTask.js";
+import { FulfilBuyOrderTask } from "./trading/fulfillBuyOrderTask.js";
+import { OrdersTask } from "./trading/ordersTask.js";
+import { ParseKmailTask } from "./trading/parseKmailTask.js";
 import type { Task } from "../types.js";
-import { WithdrawTask } from "./withdrawtask.js";
-import { GetClovers, GetWorthless, StockClovers } from "./clovertasks.js";
 
 export {
   BalanceTask,
@@ -24,7 +30,7 @@ export {
   OpenGiftPackagesTask,
   OrdersTask,
   PollChatTask,
-  RegularWithdrawTask,
+  RegularWithdrawalTask,
   SpamOffChatEffectsTask,
   WithdrawTask,
 };
@@ -35,10 +41,12 @@ export const TraderTasks: Task[] = [
   OrdersTask,
   BalanceTask,
   WithdrawTask,
-  RegularWithdrawTask,
+  RegularWithdrawalTask,
   KmailRepliesTask,
   CancelOrderTask,
-  TraderTask,
+  ParseKmailTask,
+  CreateBuyOrderTask,
+  FulfilBuyOrderTask,
   OperatorNotificationsTask,
   DeleteProcessedKmailTask,
   GetWorthless,

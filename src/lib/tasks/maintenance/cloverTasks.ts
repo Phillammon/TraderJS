@@ -1,5 +1,5 @@
-import type { Task } from "../types.js";
-import { relevantItemsAndEffects } from "../gameconstants.js";
+import type { Task } from "../../types.js";
+import { relevantItemsAndEffects } from "../../gameconstants.js";
 
 export const GetWorthless: Task = {
   name: "Get Worthless Trinkets",

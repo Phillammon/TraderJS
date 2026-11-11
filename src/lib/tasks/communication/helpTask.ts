@@ -1,5 +1,5 @@
-import type { Task } from "../types.js";
-import { sendKmailMessage } from "./kmailutils.js";
+import type { Task } from "../../types.js";
+import { sendKmailMessage } from "./kmailUtils.js";
 
 export const HelpTask: Task = {
   name: "Help",

@@ -1,12 +1,9 @@
 import { gameData } from "kol.js";
-import {
-  PROMOTIONAL_ACCOUNT_ID,
-  type TraderState,
-} from "../state.js";
-import { sendKmailMessage } from "./kmailutils.js";
-import { getCommandAccountId } from "./commandaccount.js";
-import { findItemByName } from "./itemutils.js";
-import type { Task } from "../types.js";
+import { PROMOTIONAL_ACCOUNT_ID, type TraderState } from "../../state.js";
+import { sendKmailMessage } from "../communication/kmailUtils.js";
+import { getCommandAccountId } from "../account/commandAccount.js";
+import { findItemByName } from "../shared/itemUtils.js";
+import type { Task } from "../../types.js";
 
 type CancelResult = {
   message: string;
@@ -36,18 +33,20 @@ export async function cancelOrderForPlayer(
 
   const releasedMeat = state.cancelBuyOrder(playerId, item.id);
   const accountDescription =
-    playerId === PROMOTIONAL_ACCOUNT_ID
-      ? "The bot doesn't"
-      : "You don't";
+    playerId === PROMOTIONAL_ACCOUNT_ID ? "The bot doesn't" : "You don't";
   if (releasedMeat === 0) {
     return {
       message: `${accountDescription} have an active buy order for ${item.name} (item ${item.id}).`,
     };
   }
+  console.log(
+    `[Trader] Cancelled ${playerId === PROMOTIONAL_ACCOUNT_ID ? "bot-funded" : state.getPlayerLabel(playerId)} buy order for ${item.name} (item ${item.id}); ${releasedMeat.toLocaleString()} reserved meat released.`,
+  );
   return {
-    message: playerId === PROMOTIONAL_ACCOUNT_ID
-      ? `Cancelled the bot-funded buy order for ${item.name} (item ${item.id}) and released ${releasedMeat.toLocaleString()} bot-owned meat.`
-      : `Cancelled your buy order for ${item.name} (item ${item.id}) and moved ${releasedMeat.toLocaleString()} reserved meat to your surplus.`,
+    message:
+      playerId === PROMOTIONAL_ACCOUNT_ID
+        ? `Cancelled the bot-funded buy order for ${item.name} (item ${item.id}) and released ${releasedMeat.toLocaleString()} bot-owned meat.`
+        : `Cancelled your buy order for ${item.name} (item ${item.id}) and moved ${releasedMeat.toLocaleString()} reserved meat to your surplus.`,
   };
 }
 
@@ -60,13 +59,16 @@ export const CancelOrderTask: Task = {
       return true;
     }
 
+    if (request.playerName) {
+      state.setPlayerName(request.playerId, request.playerName);
+    }
     const accountId = getCommandAccountId(request.playerId);
     const result = await cancelOrderForPlayer(state, accountId, request.item);
     await sendKmailMessage(client, request.playerId, result.message);
     if (result.rejectionReason) {
       state.queueOperatorNotification(
         `chat-cancel:${request.playerId}:${Date.now()}`,
-        `Player ${request.playerId} sent an invalid cancel command: ${result.rejectionReason} Selector: "${request.item}"`,
+        `${state.getPlayerLabel(request.playerId)} sent an invalid cancel command: ${result.rejectionReason} Selector: "${request.item}"`,
       );
     }
     state.completeCancelRequest(request);

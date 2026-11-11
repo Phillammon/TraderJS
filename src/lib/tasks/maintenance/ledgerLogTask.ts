@@ -1,13 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { config } from "../config.js";
-import { getItemName } from "./itemutils.js";
+import { config } from "../../config.js";
+import { getItemName } from "../shared/itemUtils.js";
 import {
-  PROMOTIONAL_ACCOUNT_ID,
   type AuditTransaction,
   type TraderState,
-} from "../state.js";
-import type { Task } from "../types.js";
+} from "../../state.js";
+import type { Task } from "../../types.js";
 
 function getLedgerLogInterval(): number {
   return Math.floor(Date.now() / (1000 * config.LEDGER_LOG_DELAY));
@@ -17,7 +16,18 @@ export const LedgerLogTask: Task = {
   name: "Write Ledger Log",
   done: async (_client, state) =>
     state.lastLedgerLogInterval === getLedgerLogInterval(),
-  execute: async (_client, state) => {
+  execute: async (client, state) => {
+    for (const playerId of state.players.keys()) {
+      if (playerId === 0 || state.getPlayer(playerId).name) {
+        continue;
+      }
+      const player = await client.players.fetch(playerId);
+      if (!player) {
+        throw new Error(`Could not retrieve name for player ${playerId}`);
+      }
+      state.setPlayerName(playerId, player.name);
+    }
+
     const now = new Date();
     const interval = getLedgerLogInterval();
     const filename = `ledger-${now.toISOString().replace(/[:.]/g, "-")}.log`;
@@ -61,7 +71,7 @@ async function formatLedgerLog(
     lines.push("- None");
   } else {
     for (const transaction of transactions) {
-      lines.push(await formatAuditTransaction(transaction));
+      lines.push(await formatAuditTransaction(state, transaction));
     }
   }
 
@@ -72,7 +82,7 @@ async function formatLedgerLog(
   for (const [playerId, player] of state.players) {
     lines.push(
       "",
-      `${getAccountName(playerId)}`,
+      `${state.getPlayerLabel(playerId)}`,
       `  Meat balance: ${player.meat.toLocaleString()}`,
       `  Non-transactional surplus meat: ${player.surplusMeat.toLocaleString()}`,
       "  Items:",
@@ -114,11 +124,12 @@ async function formatLedgerLog(
 }
 
 async function formatAuditTransaction(
+  state: TraderState,
   transaction: AuditTransaction,
 ): Promise<string> {
   if (transaction.type === "trade") {
     const itemName = await getItemName(transaction.itemId);
-    return `- ${transaction.timestamp} | ${getAccountName(transaction.sellerId)} sold ${transaction.quantity.toLocaleString()} x ${itemName} to ${getAccountName(transaction.buyerId)} at ${transaction.price.toLocaleString()} meat each (${(transaction.quantity * transaction.price).toLocaleString()} meat)`;
+    return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.sellerId)} sold ${transaction.quantity.toLocaleString()} x ${itemName} to ${state.getPlayerLabel(transaction.buyerId)} at ${transaction.price.toLocaleString()} meat each (${(transaction.quantity * transaction.price).toLocaleString()} meat)`;
   }
 
   if (
@@ -142,27 +153,21 @@ async function formatAuditTransaction(
       transaction.type === "unallocated"
         ? "Unallocated from promotional account"
         : transaction.type === "sent"
-          ? `Sent to Player ${transaction.playerId}`
+          ? `Sent to ${state.getPlayerLabel(transaction.playerId)}`
           : transaction.type === "surplus"
-            ? `Surplus received for ${getAccountName(transaction.playerId)}`
-            : `${getAccountName(transaction.playerId)} withdrew`;
+            ? `Surplus received for ${state.getPlayerLabel(transaction.playerId)}`
+            : `${state.getPlayerLabel(transaction.playerId)} withdrew`;
     return `- ${transaction.timestamp} | ${description}: ${assets.join(", ") || "no assets"}`;
   }
 
   const itemName = await getItemName(transaction.itemId);
   if (transaction.type === "orderCancelled") {
-    return `- ${transaction.timestamp} | ${getAccountName(transaction.playerId)} cancelled their buy order for ${itemName} (item ${transaction.itemId}); ${transaction.meat.toLocaleString()} reserved meat released to surplus`;
+    return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.playerId)} cancelled their buy order for ${itemName} (item ${transaction.itemId}); ${transaction.meat.toLocaleString()} reserved meat released to surplus`;
   }
   if (transaction.type === "bought") {
-    return `- ${transaction.timestamp} | ${getAccountName(transaction.playerId)} bought ${transaction.quantity.toLocaleString()} x ${itemName} (item ${transaction.itemId}) at ${transaction.price.toLocaleString()} meat each; total ${(transaction.quantity * transaction.price).toLocaleString()} meat`;
+    return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.playerId)} bought ${transaction.quantity.toLocaleString()} x ${itemName} (item ${transaction.itemId}) at ${transaction.price.toLocaleString()} meat each; total ${(transaction.quantity * transaction.price).toLocaleString()} meat`;
   }
-  return `- ${transaction.timestamp} | ${getAccountName(transaction.playerId)} sold ${transaction.quantity.toLocaleString()} x ${itemName} (item ${transaction.itemId}) at ${transaction.price.toLocaleString()} meat each; proceeds ${transaction.meat.toLocaleString()} meat`;
-}
-
-function getAccountName(playerId: number): string {
-  return playerId === PROMOTIONAL_ACCOUNT_ID
-    ? "PROMOTIONAL (bot-owned)"
-    : `Player ${playerId}`;
+  return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.playerId)} sold ${transaction.quantity.toLocaleString()} x ${itemName} (item ${transaction.itemId}) at ${transaction.price.toLocaleString()} meat each; proceeds ${transaction.meat.toLocaleString()} meat`;
 }
 
 function createRollbackSnapshot(state: TraderState, interval: number): object {
@@ -171,6 +176,7 @@ function createRollbackSnapshot(state: TraderState, interval: number): object {
       [...state.players].map(([playerId, player]) => [
         playerId,
         {
+          ...(player.name ? { name: player.name } : {}),
           orders: Object.fromEntries(player.orders),
           meat: player.meat,
           items: Object.fromEntries(player.items),
@@ -186,6 +192,9 @@ function createRollbackSnapshot(state: TraderState, interval: number): object {
     lastLedgerLogInterval: interval,
     pendingAuditTransactions: [],
     processedKmailIds: [...state.processedKmailIds],
+    pendingKmailActions: Object.fromEntries(state.pendingKmailActions),
+    pendingChatBuyOrders: Object.fromEntries(state.pendingChatBuyOrders),
+    seenChatBuyOrderIds: [...state.seenChatBuyOrderIds],
     pendingKmailReplies: Object.fromEntries(state.pendingKmailReplies),
     pendingOperatorNotifications: Object.fromEntries(
       state.pendingOperatorNotifications,

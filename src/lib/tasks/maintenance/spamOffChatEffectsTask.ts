@@ -1,5 +1,5 @@
-import { relevantItemsAndEffects } from "../gameconstants.js";
-import type { Task } from "../types.js";
+import { relevantItemsAndEffects } from "../../gameconstants.js";
+import type { Task } from "../../types.js";
 
 export const SpamOffChatEffectsTask: Task = {
   name: "Spamming Off Chat Effects",

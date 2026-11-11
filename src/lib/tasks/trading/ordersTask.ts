@@ -1,8 +1,8 @@
-import { getItemName } from "./itemutils.js";
-import { sendKmailMessage } from "./kmailutils.js";
-import { aggregateBuyOrders, getOrderQuantity } from "../orders.js";
-import { getCommandAccountId } from "./commandaccount.js";
-import type { Task } from "../types.js";
+import { getItemName } from "../shared/itemUtils.js";
+import { sendKmailMessage } from "../communication/kmailUtils.js";
+import { aggregateBuyOrders, getOrderQuantity } from "../../orders.js";
+import { getCommandAccountId } from "../account/commandAccount.js";
+import type { Task } from "../../types.js";
 
 export const OrdersTask: Task = {
   name: "Orders",

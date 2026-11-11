@@ -1,24 +1,27 @@
 import { gameData, type Client } from "kol.js";
-import { config } from "../config.js";
-import { relevantItemsAndEffects } from "../gameconstants.js";
-import { getActiveBuyOrdersForItem, getOrderQuantity } from "../orders.js";
-import { quoteMessage } from "./operator.js";
-import { cancelOrderForPlayer } from "./cancelorder.js";
-import { parseChatCommand } from "./chatcommands.js";
-import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
-import { findItemByName } from "./itemutils.js";
-import { sendWithdrawal } from "./withdrawalsupport.js";
+import { config } from "../../config.js";
+import { relevantItemsAndEffects } from "../../gameconstants.js";
+import { getActiveBuyOrdersForItem, getOrderQuantity } from "../../orders.js";
+import { quoteMessage } from "../communication/operator.js";
+import { cancelOrderForPlayer } from "./cancelOrder.js";
+import { parseChatCommand } from "../communication/chatCommands.js";
+import {
+  getCommandAccountId,
+  getCurrentMeat,
+} from "../account/commandAccount.js";
+import { findItemByName } from "../shared/itemUtils.js";
+import { sendWithdrawal } from "../account/withdrawalSupport.js";
 import {
   MAX_BUY_ORDER_PRICE,
   MIN_BUY_ORDER_PRICE,
   PROMOTIONAL_ACCOUNT_ID,
+  type KmailAction,
   type BuyOrder,
   type PlayerState,
   type TraderState,
-} from "../state.js";
-import type { Task } from "../types.js";
+} from "../../state.js";
 
-type Kmail = Awaited<ReturnType<Client["kmail"]["fetch"]>>[number];
+export type Kmail = Awaited<ReturnType<Client["kmail"]["fetch"]>>[number];
 type Fulfillment = {
   buyerId: number;
   player: PlayerState;
@@ -27,71 +30,157 @@ type Fulfillment = {
   price: number;
   order: BuyOrder;
 };
-type KmailProcessingResult = {
+export type KmailProcessingResult = {
   reply?: string;
   replyItems?: Record<string, number>;
   rejectionReason?: string;
 };
 
-export const TraderTask: Task = {
-  name: "Trader",
-  done: async (client, state) => {
-    if (await hasUnopenedGiftPackages(client)) {
-      return true;
-    }
-
-    const messages = await client.kmail.fetch();
-    return !messages.some(
-      (message) => !state.processedKmailIds.has(message.id),
-    );
-  },
-  execute: async (client, state) => {
-    if (await hasUnopenedGiftPackages(client)) {
-      return true;
-    }
-
-    const messages = await client.kmail.fetch();
-    const pendingMessages = messages.filter(
-      (message) => !state.processedKmailIds.has(message.id),
-    );
-    const processingOrder = [
-      ...pendingMessages.filter(
-        (message) => message.who.id !== config.OPERATOR_ID,
-      ),
-      ...pendingMessages.filter(
-        (message) => message.who.id === config.OPERATOR_ID,
-      ),
-    ];
-    for (const message of processingOrder) {
-      const result = await processIncomingKmail(client, message, state);
-      state.markKmailProcessed(
-        message.id,
-        result.reply
-          ? {
-              playerId: message.who.id,
-              message: result.reply,
-              ...(result.replyItems ? { items: result.replyItems } : {}),
-            }
-          : undefined,
-      );
-      if (result.rejectionReason) {
-        state.queueOperatorNotification(
-          `kmail:${message.id}`,
-          formatRejectedKmail(message, result.rejectionReason),
-        );
-      }
-      state.save();
-    }
-
-    return true;
-  },
-};
-
-async function hasUnopenedGiftPackages(client: Client): Promise<boolean> {
+export async function hasUnopenedGiftPackages(
+  client: Client,
+): Promise<boolean> {
   const inventory = await client.inventory.get();
   return relevantItemsAndEffects.PACKAGES.some(
     (giftPackage) => (inventory.get(giftPackage) ?? 0) > 0,
   );
+}
+
+export function getKmailAction(message: Kmail): KmailAction | undefined {
+  const receivedItems = [...message.items].filter(
+    ([item]) => !isGiftPackage(item.id),
+  );
+  const isAssetless = message.meat === 0 && receivedItems.length === 0;
+  if (Number.isNaN(message.time.getTime())) {
+    return undefined;
+  }
+  if (/^cancel(?:\s+(.+))?$/i.test(message.msg.trim())) {
+    return undefined;
+  }
+  if (isAssetless && parseChatCommand(message.msg)) {
+    return undefined;
+  }
+  if (message.who.id === config.OPERATOR_ID && message.msg.includes("@")) {
+    return "create";
+  }
+  if (message.meat > 0 && receivedItems.length > 0) {
+    return undefined;
+  }
+  if (message.meat > 0 || (isAssetless && message.msg.includes("@"))) {
+    return "create";
+  }
+  if (receivedItems.length > 0) {
+    return "fulfill";
+  }
+  return undefined;
+}
+
+export async function processQueuedKmailAction(
+  client: Client,
+  state: TraderState,
+  action: KmailAction,
+): Promise<boolean> {
+  const messages = await client.kmail.fetch();
+  const messagesById = new Map(
+    messages.map((message) => [message.id, message]),
+  );
+  const kmailIds = [...state.pendingKmailActions]
+    .filter(([, pendingAction]) => pendingAction === action)
+    .map(([kmailId]) => kmailId);
+  for (const kmailId of kmailIds) {
+    const message = messagesById.get(kmailId);
+    if (!message) {
+      throw new Error(
+        `Pending ${action} action references unavailable kmail ${kmailId}`,
+      );
+    }
+    if (getKmailAction(message) !== action) {
+      throw new Error(
+        `Kmail ${kmailId} no longer matches its pending ${action} action`,
+      );
+    }
+    const result = await processIncomingKmail(client, message, state);
+    finishKmailProcessing(message, result, state);
+  }
+  return true;
+}
+
+type IncomingMessage = Pick<Kmail, "msg" | "time" | "meat" | "items"> & {
+  who: Pick<Kmail["who"], "id" | "name">;
+};
+
+export async function processQueuedChatBuyOrders(
+  client: Client,
+  state: TraderState,
+): Promise<void> {
+  for (const request of [...state.pendingChatBuyOrders.values()]) {
+    const message: IncomingMessage = {
+      who: { id: request.playerId, name: request.playerName },
+      msg: request.message,
+      time:
+        request.timestamp === "invalid timestamp"
+          ? new Date(Number.NaN)
+          : new Date(request.timestamp),
+      meat: 0,
+      items: new Map(),
+    };
+    const result = await processIncomingKmail(client, message, state);
+    state.completeChatBuyOrder(request.id);
+    if (result.reply) {
+      state.queueKmailReply(`chat-order:${request.id}`, {
+        playerId: request.playerId,
+        message: result.reply,
+      });
+    }
+    if (result.rejectionReason) {
+      state.queueOperatorNotification(
+        `chat-order:${request.id}`,
+        formatRejectedChatBuyOrder(
+          request.playerName,
+          request,
+          result.rejectionReason,
+        ),
+      );
+    }
+    state.save();
+  }
+}
+
+function formatRejectedChatBuyOrder(
+  playerName: string,
+  request: { playerId: number; message: string; timestamp: string },
+  reason: string,
+): string {
+  return [
+    `Rejected buy-order chat message from ${playerName} (player ${request.playerId}) at ${request.timestamp}.`,
+    `Reason: ${reason}`,
+    "Quoted message:",
+    quoteMessage(request.message),
+  ].join("\n");
+}
+
+export function finishKmailProcessing(
+  message: Kmail,
+  result: KmailProcessingResult,
+  state: TraderState,
+): void {
+  state.completeKmailAction(message.id);
+  state.markKmailProcessed(
+    message.id,
+    result.reply
+      ? {
+          playerId: message.who.id,
+          message: result.reply,
+          ...(result.replyItems ? { items: result.replyItems } : {}),
+        }
+      : undefined,
+  );
+  if (result.rejectionReason) {
+    state.queueOperatorNotification(
+      `kmail:${message.id}`,
+      formatRejectedKmail(message, result.rejectionReason),
+    );
+  }
+  state.save();
 }
 
 function isGiftPackage(itemId: number): boolean {
@@ -100,12 +189,13 @@ function isGiftPackage(itemId: number): boolean {
   );
 }
 
-async function processIncomingKmail(
+export async function processIncomingKmail(
   client: Client,
-  message: Kmail,
+  message: IncomingMessage,
   state: TraderState,
 ): Promise<KmailProcessingResult> {
   const senderId = message.who.id;
+  state.setPlayerName(senderId, message.who.name);
   const receivedItems = new Map(
     [...message.items]
       .filter(([item]) => !isGiftPackage(item.id))
@@ -114,10 +204,10 @@ async function processIncomingKmail(
   const receivedMeat = message.meat;
   const isAssetless = receivedMeat === 0 && receivedItems.size === 0;
   if (Number.isNaN(message.time.getTime())) {
-    const reason = "The kmail had an invalid timestamp.";
+    const reason = "The message had an invalid timestamp.";
     state.recordSurplus(senderId, receivedMeat, receivedItems, new Date());
     return {
-      reply: `I couldn't process this kmail because it had an invalid timestamp. All attached meat and items have been added to surplus. ${await formatSurplusBalance(state, senderId)}`,
+      reply: `I couldn't process this message because it had an invalid timestamp. All attached meat and items have been added to surplus. ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason: reason,
     };
   }
@@ -217,6 +307,9 @@ async function processIncomingKmail(
       parsedOrder.price,
       parsedOrder.quantity,
       message.time,
+    );
+    console.log(
+      `[Trader] Created bot-funded buy order: ${order.quantity.toLocaleString()} x ${parsedOrder.item.name} (item ${parsedOrder.item.id}) at ${parsedOrder.price.toLocaleString()} meat each; ${order.allocatedMeat.toLocaleString()} meat allocated.`,
     );
     const remainingPromotionalMeat = state.getPlayer(
       PROMOTIONAL_ACCOUNT_ID,
@@ -407,6 +500,14 @@ async function processIncomingKmail(
       player.orders.delete(itemId);
     }
   }
+  for (const { buyerId, itemId, quantity, price } of fulfillments) {
+    const item = [...message.items.keys()].find(
+      (messageItem) => messageItem.id === itemId,
+    );
+    console.log(
+      `[Trader] Fulfilled buy order: ${state.getPlayerLabel(senderId)} sold ${quantity.toLocaleString()} x ${item?.name ?? `Item ${itemId}`} (item ${itemId}) to ${state.getPlayerLabel(buyerId)} at ${price.toLocaleString()} meat each (${(quantity * price).toLocaleString()} meat).`,
+    );
+  }
   for (const [itemId, quantity] of surplusItems) {
     if (quantity <= 0) {
       surplusItems.delete(itemId);
@@ -502,7 +603,7 @@ async function processIncomingKmail(
         ? `I have added all ${receivedMeat.toLocaleString()} attached meat to your surplus balance.`
         : "Your existing surplus remains unchanged.";
     return {
-      reply: `I couldn't create a buy order from your kmail: ${parsedOrder.reason} ${receipt} ${await formatSurplusBalance(state, senderId)}`,
+      reply: `I couldn't create a buy order from your message: ${parsedOrder.reason} ${receipt} ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason: parsedOrder.reason,
     };
   }
@@ -514,13 +615,13 @@ async function processIncomingKmail(
   if (requiredMeat > availableOrderMeat) {
     state.recordSurplus(senderId, receivedMeat, new Map(), message.time, false);
     state.recordSurplusAudit(senderId, receivedMeat, new Map(), message.time);
-    const rejectionReason = `The requested order requires ${requiredMeat.toLocaleString()} meat, but only ${availableOrderMeat.toLocaleString()} meat is available from your surplus and this kmail.`;
+    const rejectionReason = `The requested order requires ${requiredMeat.toLocaleString()} meat, but only ${availableOrderMeat.toLocaleString()} meat is available from your surplus and this message.`;
     const receipt =
       receivedMeat > 0
         ? `All ${receivedMeat.toLocaleString()} attached meat has been added to your surplus balance.`
         : "Your existing surplus remains unchanged.";
     return {
-      reply: `I couldn't create a buy order for ${parsedOrder.item.name}: the requested order requires ${requiredMeat.toLocaleString()} meat, but only ${availableOrderMeat.toLocaleString()} meat is available from your surplus and this kmail. ${receipt} ${await formatSurplusBalance(state, senderId)}`,
+      reply: `I couldn't create a buy order for ${parsedOrder.item.name}: the requested order requires ${requiredMeat.toLocaleString()} meat, but only ${availableOrderMeat.toLocaleString()} meat is available from your surplus and this message. ${receipt} ${await formatSurplusBalance(state, senderId)}`,
       rejectionReason,
     };
   }
@@ -543,6 +644,9 @@ async function processIncomingKmail(
     state.recordSurplusAudit(senderId, receivedMeat, new Map(), message.time);
     throw error;
   }
+  console.log(
+    `[Trader] Created buy order: ${state.getPlayerLabel(senderId)} wants ${orderPlan.quantity.toLocaleString()} x ${orderPlan.item.name} (item ${orderPlan.item.id}) at ${orderPlan.price.toLocaleString()} meat each; ${orderPlan.allocatedMeat.toLocaleString()} meat allocated${releasedMeat > 0 ? `, including ${releasedMeat.toLocaleString()} meat released from the replaced order` : ""}.`,
+  );
   const surplusMeat = Math.max(
     0,
     receivedMeat - orderPlan.allocatedMeat + releasedMeat,
@@ -614,10 +718,10 @@ async function formatSurplusBalance(
   const player = state.getPlayer(playerId);
   const items = await Promise.all(
     [...player.surplusItems]
-      .map(([itemId, quantity]) => [
-        itemId,
-        quantity - (returningItems.get(itemId) ?? 0),
-      ] as const)
+      .map(
+        ([itemId, quantity]) =>
+          [itemId, quantity - (returningItems.get(itemId) ?? 0)] as const,
+      )
       .filter(([, quantity]) => quantity > 0)
       .map(async ([itemId, quantity]) => {
         const item = await gameData.findItemById(itemId);
@@ -642,7 +746,7 @@ async function parseBuyOrder(text: string): Promise<
     return {
       ok: false,
       reason:
-        "I can only handle one order per kmail- I see too many @ signs here. Use the format `[optional quantity] x [item name or item id] @ [price per item]`",
+        "I can only handle one order per message- I see too many @ signs here. Use the format `[optional quantity] x [item name or item id] @ [price per item]`",
     };
   }
 

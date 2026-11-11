@@ -1,4 +1,4 @@
-import type { ChatCommand } from "../state.js";
+import type { ChatCommand } from "../../state.js";
 
 const CHAT_COMMANDS: readonly ChatCommand[] = [
   "help",

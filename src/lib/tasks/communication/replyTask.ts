@@ -1,7 +1,7 @@
 import { gameData } from "kol.js";
 import type { Item } from "data-of-loathing";
-import type { Task } from "../types.js";
-import { sendKmailMessage } from "./kmailutils.js";
+import type { Task } from "../../types.js";
+import { sendKmailMessage } from "./kmailUtils.js";
 
 export const KmailRepliesTask: Task = {
   name: "Kmail Replies",
@@ -29,12 +29,10 @@ export const KmailRepliesTask: Task = {
         items.size > 0 ? { items } : undefined,
       );
       if (itemQuantities.size > 0) {
-        state.recordSent(
-          reply.playerId,
-          0,
-          itemQuantities,
-          { meat: 0, items: itemQuantities },
-        );
+        state.recordSent(reply.playerId, 0, itemQuantities, {
+          meat: 0,
+          items: itemQuantities,
+        });
       }
       state.completeKmailReply(kmailId);
       state.save();

@@ -1,10 +1,10 @@
-import { getWithdrawableAssets } from "../orders.js";
-import { PROMOTIONAL_ACCOUNT_ID } from "../state.js";
-import { sendWithdrawal } from "./withdrawalsupport.js";
-import { sendKmailMessage } from "./kmailutils.js";
-import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
-import { getItemName } from "./itemutils.js";
-import type { Task } from "../types.js";
+import { getWithdrawableAssets } from "../../orders.js";
+import { PROMOTIONAL_ACCOUNT_ID } from "../../state.js";
+import { sendWithdrawal } from "./withdrawalSupport.js";
+import { sendKmailMessage } from "../communication/kmailUtils.js";
+import { getCommandAccountId, getCurrentMeat } from "./commandAccount.js";
+import { getItemName } from "../shared/itemUtils.js";
+import type { Task } from "../../types.js";
 
 export const WithdrawTask: Task = {
   name: "Withdraw",

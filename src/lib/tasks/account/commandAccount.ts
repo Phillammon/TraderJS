@@ -1,5 +1,5 @@
-import { config } from "../config.js";
-import { PROMOTIONAL_ACCOUNT_ID } from "../state.js";
+import { config } from "../../config.js";
+import { PROMOTIONAL_ACCOUNT_ID } from "../../state.js";
 
 export function getCommandAccountId(requesterId: number): number {
   return requesterId === config.OPERATOR_ID
