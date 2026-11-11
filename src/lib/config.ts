@@ -18,7 +18,7 @@ export const schema = {
 
   TRADE_BEACON_DELAY: {
     type: Number,
-    default: 10800,
+    default: 3600,
   },
 
   WITHDRAWAL_DELAY: {

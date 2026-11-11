@@ -34,6 +34,7 @@ export async function sendWithdrawal(
   available: { meat: number; items: Map<number, number> },
   stored: PlayerState,
   state: TraderState,
+  preferSurplusItems = false,
 ): Promise<void> {
   const itemBatches = chunkItems([...available.items], 10);
   if (itemBatches.length === 0) {
@@ -46,7 +47,7 @@ export async function sendWithdrawal(
     const report = await prepareWithdrawalReport(stored, {
       meat: batchMeat,
       items: batchItems,
-    });
+    }, preferSurplusItems);
     const items = await resolveItems(batchItems);
     const message =
       itemBatches.length > 1
@@ -80,6 +81,7 @@ function chunkItems(
 export async function prepareWithdrawalReport(
   stored: PlayerState,
   available: { meat: number; items: Map<number, number> },
+  preferSurplusItems = false,
 ): Promise<{
   message: string;
   allocations: TransactionAllocation[];
@@ -92,6 +94,24 @@ export async function prepareWithdrawalReport(
   const allocations: TransactionAllocation[] = [];
   const surplusItems = new Map<number, number>();
   const itemQuantities = new Map(available.items);
+
+  if (preferSurplusItems) {
+    for (const [itemId, quantity] of itemQuantities) {
+      const surplusQuantity = Math.min(
+        quantity,
+        stored.surplusItems.get(itemId) ?? 0,
+      );
+      if (surplusQuantity <= 0) {
+        continue;
+      }
+
+      surplusItems.set(itemId, surplusQuantity);
+      surplusLines.push(
+        `- ${surplusQuantity.toLocaleString()} x ${await getItemName(itemId)} (not associated with a trade)`,
+      );
+      itemQuantities.set(itemId, quantity - surplusQuantity);
+    }
+  }
 
   for (const transaction of stored.transactions) {
     if (transaction.type !== "bought") {
@@ -116,13 +136,15 @@ export async function prepareWithdrawalReport(
     if (quantity <= 0) {
       continue;
     }
-    const surplusQuantity = stored.surplusItems.get(itemId) ?? 0;
+    const surplusQuantity =
+      (stored.surplusItems.get(itemId) ?? 0) -
+      (surplusItems.get(itemId) ?? 0);
     if (quantity > surplusQuantity) {
       throw new Error(
         `${quantity} withdrawable item(s) for item ${itemId} exceed recorded surplus`,
       );
     }
-    surplusItems.set(itemId, quantity);
+    surplusItems.set(itemId, (surplusItems.get(itemId) ?? 0) + quantity);
     surplusLines.push(
       `- ${quantity.toLocaleString()} x ${await getItemName(itemId)} (not associated with a trade)`,
     );

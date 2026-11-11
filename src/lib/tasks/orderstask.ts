@@ -22,7 +22,7 @@ export const OrdersTask: Task = {
           const itemName = await getItemName(itemId);
           const quantity = getOrderQuantity(order.meat, order.price);
           return [
-            `- ${itemName} (ID ${itemId})`,
+            `${itemName} (ID ${itemId})`,
             `-- ${quantity.toLocaleString()} items at ${order.price.toLocaleString()} meat each (${order.meat.toLocaleString()} meat reserved)`,
           ].join("\n");
         }),
@@ -45,7 +45,7 @@ export const OrdersTask: Task = {
             `-- And ${lowerQuantity.toLocaleString()} more at lower prices`,
           );
         }
-        return `- ${itemName} (ID ${itemId})\n${highestLevels.join("\n")}`;
+        return `${itemName} (ID ${itemId})\n${highestLevels.join("\n")}`;
       }),
     );
     await sendKmailMessage(

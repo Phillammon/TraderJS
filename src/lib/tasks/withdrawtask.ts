@@ -72,7 +72,7 @@ export const WithdrawTask: Task = {
       await sendKmailMessage(
         client,
         playerId,
-        "I can't send your stored assets while your account is in Hardcore, Ronin, or Legacy of Loathing. Please whisper `withdraw` again when you are no longer in that state.",
+        "I can't send your stored assets while your account is in Hardcore, Ronin, or Legacy of Loathing. Please message me `withdraw` again when you are no longer in that state.",
       );
       state.completeChatRequest("withdraw", playerId);
       state.save();

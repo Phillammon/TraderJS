@@ -7,6 +7,7 @@ import { cancelOrderForPlayer } from "./cancelorder.js";
 import { parseChatCommand } from "./chatcommands.js";
 import { getCommandAccountId, getCurrentMeat } from "./commandaccount.js";
 import { findItemByName } from "./itemutils.js";
+import { sendWithdrawal } from "./withdrawalsupport.js";
 import {
   MAX_BUY_ORDER_PRICE,
   MIN_BUY_ORDER_PRICE,
@@ -61,7 +62,6 @@ export const TraderTask: Task = {
       ),
     ];
     for (const message of processingOrder) {
-
       const result = await processIncomingKmail(client, message, state);
       state.markKmailProcessed(
         message.id,
@@ -151,8 +151,7 @@ async function processIncomingKmail(
     }
   }
   if (senderId === config.OPERATOR_ID && message.msg.includes("@")) {
-    const attachedAssets =
-      receivedMeat > 0 || receivedItems.size > 0;
+    const attachedAssets = receivedMeat > 0 || receivedItems.size > 0;
     if (attachedAssets) {
       state.recordSurplus(senderId, receivedMeat, receivedItems, message.time);
     }
@@ -180,9 +179,8 @@ async function processIncomingKmail(
     const totalMeat = await getCurrentMeat(client);
     const availableMeat = state.syncPromotionalAccount(totalMeat);
     const previousOrderMeat =
-      state
-        .getPlayer(PROMOTIONAL_ACCOUNT_ID)
-        .orders.get(parsedOrder.item.id)?.meat ?? 0;
+      state.getPlayer(PROMOTIONAL_ACCOUNT_ID).orders.get(parsedOrder.item.id)
+        ?.meat ?? 0;
     const replacementAvailable = availableMeat + previousOrderMeat;
     const quantity =
       parsedOrder.quantity ??
@@ -193,8 +191,7 @@ async function processIncomingKmail(
       !Number.isSafeInteger(requiredMeat) ||
       requiredMeat > replacementAvailable
     ) {
-      const reason =
-        `The bot has ${replacementAvailable.toLocaleString()} meat available for this order, including its current allocation, which is not enough to fund ${parsedOrder.quantity ? `${parsedOrder.quantity.toLocaleString()} item(s)` : "one item"} at ${parsedOrder.price.toLocaleString()} meat each.`;
+      const reason = `The bot has ${replacementAvailable.toLocaleString()} meat available for this order, including its current allocation, which is not enough to fund ${parsedOrder.quantity ? `${parsedOrder.quantity.toLocaleString()} item(s)` : "one item"} at ${parsedOrder.price.toLocaleString()} meat each.`;
       return {
         reply: [
           `I couldn't create a bot-funded buy order: ${reason}`,
@@ -214,8 +211,9 @@ async function processIncomingKmail(
       parsedOrder.quantity,
       message.time,
     );
-    const remainingPromotionalMeat =
-      state.getPlayer(PROMOTIONAL_ACCOUNT_ID).surplusMeat;
+    const remainingPromotionalMeat = state.getPlayer(
+      PROMOTIONAL_ACCOUNT_ID,
+    ).surplusMeat;
     return {
       reply: [
         `Bot-funded buy order set up: ${order.quantity.toLocaleString()} x ${parsedOrder.item.name} at ${parsedOrder.price.toLocaleString()} meat each (${order.allocatedMeat.toLocaleString()} meat allocated from bot-owned funds).`,
@@ -250,7 +248,7 @@ async function processIncomingKmail(
         "I couldn't understand what you wanted because this kmail contained no meat or items.",
         "To create a buy order, send meat with a note in the format `[optional quantity] x [item name or item id] @ [price per item]` (100 to 1,000,000,000 meat per item).",
         "To fulfil a buy order, send the item(s) you want to sell.",
-        'Whisper "help" for commands and more information.',
+        'Message me "help" for commands and more information.',
       ].join("\n"),
       rejectionReason: "The kmail contained no assets.",
     };
@@ -293,8 +291,7 @@ async function processIncomingKmail(
         }
       : undefined;
   if (orderPlan) {
-    const postOrderSurplus =
-      availableOrderMeat - orderPlan.allocatedMeat;
+    const postOrderSurplus = availableOrderMeat - orderPlan.allocatedMeat;
     if (!Number.isSafeInteger(postOrderSurplus)) {
       throw new RangeError("Buy order surplus exceeds safe limits");
     }
@@ -337,6 +334,15 @@ async function processIncomingKmail(
   }
 
   validateFulfillments(senderId, receivedMeat, fulfillments, state);
+  const saleProceeds = fulfillments
+    .filter(({ buyerId }) => buyerId !== senderId)
+    .reduce(
+      (total, { quantity, price }) => total + quantity * price,
+      0,
+    );
+  if (!Number.isSafeInteger(saleProceeds)) {
+    throw new RangeError("Fulfillment proceeds exceed safe limits");
+  }
   const selfPurchasedItems = new Map<number, number>();
   for (const fulfillment of fulfillments) {
     if (fulfillment.buyerId === senderId) {
@@ -367,18 +373,11 @@ async function processIncomingKmail(
   for (const fulfillment of fulfillments) {
     const { buyerId, itemId, quantity, price, player, order } = fulfillment;
     const totalPrice = quantity * price;
-    state.recordPurchase(
-      buyerId,
-      itemId,
-      quantity,
-      price,
-      message.time,
-      {
-        recordAudit: true,
-        reservedMeat: totalPrice,
-        selfDealing: buyerId === senderId,
-      },
-    );
+    state.recordPurchase(buyerId, itemId, quantity, price, message.time, {
+      recordAudit: true,
+      reservedMeat: totalPrice,
+      selfDealing: buyerId === senderId,
+    });
     if (buyerId !== senderId) {
       state.recordSale(senderId, itemId, quantity, price, message.time, false);
       state.recordTradeAudit(
@@ -402,6 +401,31 @@ async function processIncomingKmail(
     }
   }
   state.recordSurplusAudit(senderId, 0, surplusItems, message.time);
+  const returnableSurplusItems = new Map(
+    [...surplusItems].filter(([, quantity]) => quantity > 0),
+  );
+  const seller =
+    saleProceeds > 0 || returnableSurplusItems.size > 0
+      ? await client.players.fetch(senderId)
+      : undefined;
+  const canSendProceeds =
+    !!seller &&
+    !seller.inHardcore &&
+    !seller.inRonin &&
+    seller.path !== "Legacy of Loathing";
+  if (
+    canSendProceeds &&
+    (saleProceeds > 0 || returnableSurplusItems.size > 0)
+  ) {
+    await sendWithdrawal(
+      client,
+      senderId,
+      { meat: saleProceeds, items: returnableSurplusItems },
+      state.getPlayer(senderId),
+      state,
+      true,
+    );
+  }
 
   if (receivedMeat <= 0 && parsedOrder === undefined) {
     const fulfilledLines = await Promise.all(
@@ -413,7 +437,7 @@ async function processIncomingKmail(
     const surplusLines = await Promise.all(
       [...surplusItems].map(async ([itemId, quantity]) => {
         const item = await gameData.findItemById(itemId);
-        return `- ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} added to surplus.`;
+        return `- ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} ${canSendProceeds ? "returned to you" : "added to surplus"}.`;
       }),
     );
     return {
@@ -423,8 +447,22 @@ async function processIncomingKmail(
         "Fulfilled buy orders:",
         fulfilledLines.length > 0 ? fulfilledLines.join("\n") : "- None",
         "",
-        "Items added to surplus:",
+        canSendProceeds
+          ? "Surplus items returned:"
+          : "Items added to surplus:",
         surplusLines.length > 0 ? surplusLines.join("\n") : "- None",
+        ...(saleProceeds > 0
+          ? [
+              canSendProceeds
+                ? `Sent ${saleProceeds.toLocaleString()} meat directly from fulfilled buy orders.`
+                : `${saleProceeds.toLocaleString()} meat from fulfilled buy orders is held in your balance because your account cannot currently receive it.`,
+            ]
+          : []),
+        ...(returnableSurplusItems.size > 0 && !canSendProceeds
+          ? [
+              "Your items remain stored because your account cannot currently receive them.",
+            ]
+          : []),
         "",
         await formatSurplusBalance(state, senderId),
       ].join("\n"),
@@ -487,12 +525,7 @@ async function processIncomingKmail(
     0,
     receivedMeat - orderPlan.allocatedMeat + releasedMeat,
   );
-  state.recordSurplusAudit(
-    senderId,
-    surplusMeat,
-    new Map(),
-    message.time,
-  );
+  state.recordSurplusAudit(senderId, surplusMeat, new Map(), message.time);
   return {
     reply: [
       `Buy order set up: ${orderPlan.quantity.toLocaleString()} x ${orderPlan.item.name} at ${orderPlan.price.toLocaleString()} meat each (${orderPlan.allocatedMeat.toLocaleString()} meat allocated).`,
@@ -597,7 +630,8 @@ async function parseBuyOrder(text: string): Promise<
   ) {
     return {
       ok: false,
-      reason: "The requested quantity must be a positive whole number and the total order value must be within safe limits.",
+      reason:
+        "The requested quantity must be a positive whole number and the total order value must be within safe limits.",
     };
   }
   if (price < MIN_BUY_ORDER_PRICE || price > MAX_BUY_ORDER_PRICE) {

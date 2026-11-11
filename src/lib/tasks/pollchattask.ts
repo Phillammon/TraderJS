@@ -40,7 +40,7 @@ export const PollChatTask: Task = {
         queueUnrecognizedChatMessage(state, message);
         await client.chat.send(
           message.who.id,
-          'I don\'t recognize that command. Whisper "help" to see what I can do.',
+          'I don\'t recognize that command. Message ne "help" to see what I can do.',
         );
       }
     }
