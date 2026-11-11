@@ -111,6 +111,12 @@ type StoredPlayerState = {
   surplusItems?: Record<string, number>;
 };
 
+type PendingKmailReply = {
+  playerId: number;
+  message: string;
+  items?: Record<string, number>;
+};
+
 type StoredState = {
   players: Record<string, StoredPlayerState>;
   lastBeacon?: number;
@@ -119,7 +125,7 @@ type StoredState = {
   lastLedgerLogInterval?: number;
   pendingAuditTransactions?: AuditTransaction[];
   processedKmailIds?: number[];
-  pendingKmailReplies?: Record<string, { playerId: number; message: string }>;
+  pendingKmailReplies?: Record<string, PendingKmailReply>;
   pendingOperatorNotifications?: Record<string, string>;
   cancelQueue?: { playerId: number; item: string }[];
   chatQueues?: Record<ChatCommand, number[]>;
@@ -138,7 +144,7 @@ export class TraderState {
   public readonly processedKmailIds = new Set<number>();
   public readonly pendingKmailReplies = new Map<
     number,
-    { playerId: number; message: string }
+    PendingKmailReply
   >();
   public readonly pendingOperatorNotifications = new Map<string, string>();
   public readonly cancelQueue: CancelRequest[] = [];
@@ -428,10 +434,31 @@ export class TraderState {
         ) {
           throw new TypeError(`Invalid pending kmail reply ${kmailId}`);
         }
-        this.pendingKmailReplies.set(kmailId, {
+        const pendingReply: PendingKmailReply = {
           playerId: reply.playerId,
           message: reply.message,
-        });
+        };
+        if (reply.items !== undefined) {
+          if (!isRecord(reply.items)) {
+            throw new TypeError(`Invalid attached items for kmail reply ${kmailId}`);
+          }
+          const items: Record<string, number> = {};
+          for (const [itemIdText, quantity] of Object.entries(reply.items)) {
+            const itemId = parseId(itemIdText, "item");
+            if (
+              typeof quantity !== "number" ||
+              !Number.isSafeInteger(quantity) ||
+              quantity <= 0
+            ) {
+              throw new TypeError(
+                `Invalid attached item quantity for kmail reply ${kmailId}`,
+              );
+            }
+            items[String(itemId)] = quantity;
+          }
+          pendingReply.items = items;
+        }
+        this.pendingKmailReplies.set(kmailId, pendingReply);
       }
     }
     if (stored.pendingOperatorNotifications !== undefined) {
@@ -1016,7 +1043,7 @@ export class TraderState {
 
   public markKmailProcessed(
     kmailId: number,
-    reply?: { playerId: number; message: string },
+    reply?: PendingKmailReply,
   ): void {
     if (!Number.isSafeInteger(kmailId) || kmailId <= 0) {
       throw new RangeError(`Invalid kmail id: ${kmailId}`);
@@ -1028,6 +1055,19 @@ export class TraderState {
         typeof reply.message !== "string")
     ) {
       throw new TypeError(`Invalid reply for kmail ${kmailId}`);
+    }
+    if (reply?.items !== undefined) {
+      for (const [itemIdText, quantity] of Object.entries(reply.items)) {
+        const itemId = Number(itemIdText);
+        if (
+          !Number.isSafeInteger(itemId) ||
+          itemId <= 0 ||
+          !Number.isSafeInteger(quantity) ||
+          quantity <= 0
+        ) {
+          throw new TypeError(`Invalid attached items for kmail ${kmailId}`);
+        }
+      }
     }
     this.processedKmailIds.add(kmailId);
     if (reply) {

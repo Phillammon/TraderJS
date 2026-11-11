@@ -29,6 +29,7 @@ type Fulfillment = {
 };
 type KmailProcessingResult = {
   reply?: string;
+  replyItems?: Record<string, number>;
   rejectionReason?: string;
 };
 
@@ -66,7 +67,11 @@ export const TraderTask: Task = {
       state.markKmailProcessed(
         message.id,
         result.reply
-          ? { playerId: message.who.id, message: result.reply }
+          ? {
+              playerId: message.who.id,
+              message: result.reply,
+              ...(result.replyItems ? { items: result.replyItems } : {}),
+            }
           : undefined,
       );
       if (result.rejectionReason) {
@@ -417,20 +422,16 @@ async function processIncomingKmail(
       : undefined;
   const canSendMeat = !!seller && !seller.inHardcore && !seller.inRonin;
   const canSendItems = canSendMeat && seller?.path !== "Legacy of Loathing";
-  if (
-    (canSendMeat && saleProceeds > 0) ||
-    (canSendItems && returnableSurplusItems.size > 0)
-  ) {
+  if (canSendMeat && saleProceeds > 0) {
     await sendWithdrawal(
       client,
       senderId,
       {
-        meat: canSendMeat ? saleProceeds : 0,
-        items: canSendItems ? returnableSurplusItems : new Map(),
+        meat: saleProceeds,
+        items: new Map(),
       },
       state.getPlayer(senderId),
       state,
-      true,
     );
   }
 
@@ -478,8 +479,15 @@ async function processIncomingKmail(
             ]
           : []),
         "",
-        await formatSurplusBalance(state, senderId),
+        await formatSurplusBalance(
+          state,
+          senderId,
+          canSendItems ? returnableSurplusItems : new Map(),
+        ),
       ].join("\n"),
+      ...(canSendItems && returnableSurplusItems.size > 0
+        ? { replyItems: Object.fromEntries(returnableSurplusItems) }
+        : {}),
     };
   }
 
@@ -601,13 +609,20 @@ function formatRejectedKmail(message: Kmail, reason: string): string {
 async function formatSurplusBalance(
   state: TraderState,
   playerId: number,
+  returningItems: ReadonlyMap<number, number> = new Map(),
 ): Promise<string> {
   const player = state.getPlayer(playerId);
   const items = await Promise.all(
-    [...player.surplusItems].map(async ([itemId, quantity]) => {
-      const item = await gameData.findItemById(itemId);
-      return `${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`}`;
-    }),
+    [...player.surplusItems]
+      .map(([itemId, quantity]) => [
+        itemId,
+        quantity - (returningItems.get(itemId) ?? 0),
+      ] as const)
+      .filter(([, quantity]) => quantity > 0)
+      .map(async ([itemId, quantity]) => {
+        const item = await gameData.findItemById(itemId);
+        return `${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`}`;
+      }),
   );
   return `Current surplus: ${player.surplusMeat.toLocaleString()} meat; ${items.length > 0 ? items.join(", ") : "no surplus items"}.`;
 }
