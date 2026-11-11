@@ -305,12 +305,20 @@ async function processIncomingKmail(
     state.syncPromotionalAccount(await getCurrentMeat(client));
   }
   const fulfillments: Fulfillment[] = [];
+  const buyOrderVolume = new Map<number, number>();
   for (const [itemId, quantity] of receivedItems) {
     if (isGiftPackage(itemId)) {
       continue;
     }
     let remainingQuantity = quantity;
     const orders = getActiveBuyOrdersForItem(state.players, itemId);
+    buyOrderVolume.set(
+      itemId,
+      orders.reduce(
+        (total, { order }) => total + getOrderQuantity(order.meat, order.price),
+        0,
+      ),
+    );
 
     for (const { playerId, player, order } of orders) {
       if (remainingQuantity === 0) {
@@ -436,7 +444,14 @@ async function processIncomingKmail(
     const surplusLines = await Promise.all(
       [...surplusItems].map(async ([itemId, quantity]) => {
         const item = await gameData.findItemById(itemId);
-        return `- ${quantity.toLocaleString()} x ${item?.name ?? `Item #${itemId}`} ${canSendItems ? "returned to you" : "added to surplus"}.`;
+        const itemName = item?.name ?? `Item #${itemId}`;
+        const reason = getSurplusReason(
+          itemId,
+          buyOrderVolume.get(itemId) ?? 0,
+          message.time,
+          state,
+        );
+        return `- ${quantity.toLocaleString()} x ${itemName}: ${reason} ${canSendItems ? "Returned to you." : "Added to surplus."}`;
       }),
     );
     return {
@@ -536,6 +551,37 @@ async function processIncomingKmail(
       await formatSurplusBalance(state, senderId),
     ].join("\n"),
   };
+}
+
+function getSurplusReason(
+  itemId: number,
+  activeOrderVolume: number,
+  timestamp: Date,
+  state: TraderState,
+): string {
+  if (activeOrderVolume > 0) {
+    return "There was not enough active buy-order volume.";
+  }
+
+  const recentFill = state.pendingAuditTransactions.some((transaction) => {
+    if (transaction.type !== "bought" && transaction.type !== "trade") {
+      return false;
+    }
+    if (transaction.itemId !== itemId) {
+      return false;
+    }
+
+    const transactionTime = Date.parse(transaction.timestamp);
+    return (
+      Number.isFinite(transactionTime) &&
+      transactionTime <= timestamp.getTime() &&
+      timestamp.getTime() - transactionTime <= config.LEDGER_LOG_DELAY * 1000
+    );
+  });
+  if (recentFill) {
+    return "Sorry, the buy orders for this item were active recently but have already been filled.";
+  }
+  return "There were no active buy orders for this item.";
 }
 
 function formatRejectedKmail(message: Kmail, reason: string): string {
