@@ -23,7 +23,7 @@ export const OrdersTask: Task = {
           const quantity = getOrderQuantity(order.meat, order.price);
           return [
             `${itemName} (ID ${itemId})`,
-            `-- ${quantity.toLocaleString()} items at ${order.price.toLocaleString()} meat each (${order.meat.toLocaleString()} meat reserved)`,
+            `-- ${quantity.toLocaleString()} at ${order.price.toLocaleString()} meat each (${order.meat.toLocaleString()} meat reserved)`,
           ].join("\n");
         }),
     );

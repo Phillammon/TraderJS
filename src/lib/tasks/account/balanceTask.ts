@@ -33,7 +33,7 @@ export const BalanceTask: Task = {
         .map(async ([itemId, order]) => {
           const itemName = await getItemName(itemId);
           const quantity = getOrderQuantity(order.meat, order.price);
-          return `- ${itemName} (ID ${itemId}): ${order.meat.toLocaleString()} meat reserved; ${quantity.toLocaleString()} items at ${order.price.toLocaleString()} meat each`;
+          return `- ${itemName} (ID ${itemId}): ${order.meat.toLocaleString()} meat reserved; ${quantity.toLocaleString()} at ${order.price.toLocaleString()} meat each`;
         }),
     );
     const returnItemCount = [...available.items.values()].reduce(

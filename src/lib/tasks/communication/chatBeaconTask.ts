@@ -24,22 +24,16 @@ export const ChatBeaconTask: Task = {
       }
       return { itemId, highestPrice, quantity };
     });
-    const preferredOrders =
-      orders.filter((order) => order.highestPrice > 1000).length > 0
-        ? orders.filter((order) => order.highestPrice > 1000)
-        : orders.filter((order) => order.highestPrice > 150);
-    const advertisedOrders =
-      preferredOrders.length > 0 ? preferredOrders : orders;
     let advertisement =
       'I can help you make buy orders- message me "help" to find out more!';
-    if (advertisedOrders.length > 0) {
-      const selectedIndex = Math.floor(Math.random() * advertisedOrders.length);
-      const selected = advertisedOrders[selectedIndex];
+    if (orders.length > 0) {
+      const selectedIndex = Math.floor(Math.random() * orders.length);
+      const selected = orders[selectedIndex];
       if (!selected) {
         throw new Error("Could not select an active buy order for Chat Beacon");
       }
       const { itemId, highestPrice, quantity } = selected;
-      advertisement = `I'm buying ${quantity.toLocaleString()}x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}. Message me "help" to find out more about buy orders!`;
+      advertisement = `I'm buying ${quantity.toLocaleString()}x ${await getItemName(itemId)} at ${highestPrice.toLocaleString()} meat${quantity > 1 ? " each" : ""}${orders.length > 1 ? ", and more!" : "."} Message me "help" to find out more about buy orders!`;
     }
     await client.chat.macro(`/trade ${advertisement}`);
     state.lastBeacon = Date.now();
