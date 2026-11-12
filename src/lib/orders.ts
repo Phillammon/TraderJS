@@ -24,7 +24,7 @@ export function getWithdrawableAssets(player: PlayerState): {
 } {
   const items = new Map(
     [...player.items].filter(
-      ([itemId, quantity]) => quantity > 0 && !player.orders.has(itemId),
+      ([, quantity]) => quantity > 0,
     ),
   );
   return {

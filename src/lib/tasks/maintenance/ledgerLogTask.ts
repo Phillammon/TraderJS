@@ -71,6 +71,9 @@ async function formatLedgerLog(
     lines.push("- None");
   } else {
     for (const transaction of transactions) {
+      if (transaction.type === "bought") {
+        continue;
+      }
       lines.push(await formatAuditTransaction(state, transaction));
     }
   }
@@ -125,7 +128,7 @@ async function formatLedgerLog(
 
 async function formatAuditTransaction(
   state: TraderState,
-  transaction: AuditTransaction,
+  transaction: Exclude<AuditTransaction, { type: "bought" }>,
 ): Promise<string> {
   if (transaction.type === "trade") {
     const itemName = await getItemName(transaction.itemId);
@@ -163,9 +166,6 @@ async function formatAuditTransaction(
   const itemName = await getItemName(transaction.itemId);
   if (transaction.type === "orderCancelled") {
     return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.playerId)} cancelled their buy order for ${itemName} (item ${transaction.itemId}); ${transaction.meat.toLocaleString()} reserved meat released to surplus`;
-  }
-  if (transaction.type === "bought") {
-    return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.playerId)} bought ${transaction.quantity.toLocaleString()} x ${itemName} (item ${transaction.itemId}) at ${transaction.price.toLocaleString()} meat each; total ${(transaction.quantity * transaction.price).toLocaleString()} meat`;
   }
   return `- ${transaction.timestamp} | ${state.getPlayerLabel(transaction.playerId)} sold ${transaction.quantity.toLocaleString()} x ${itemName} (item ${transaction.itemId}) at ${transaction.price.toLocaleString()} meat each; proceeds ${transaction.meat.toLocaleString()} meat`;
 }
