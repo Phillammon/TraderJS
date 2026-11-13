@@ -6,9 +6,9 @@ import { HelpTask } from "./communication/helpTask.js";
 import { OperatorNotificationsTask } from "./communication/operator.js";
 import { PollChatTask } from "./communication/pollChatTask.js";
 import { KmailRepliesTask } from "./communication/replyTask.js";
-import { DeleteProcessedKmailTask } from "./maintenance/deleteProcessedKmailsTask.js";
 import { LedgerLogTask } from "./maintenance/ledgerLogTask.js";
 import { OpenGiftPackagesTask } from "./maintenance/openGiftPackagesTask.js";
+import { PruneProcessedKmailsTask } from "./maintenance/pruneProcessedKmailsTask.js";
 import { SpamOffChatEffectsTask } from "./maintenance/spamOffChatEffectsTask.js";
 import {
   GetClovers,
@@ -48,7 +48,7 @@ export const TraderTasks: Task[] = [
   CreateBuyOrderTask,
   FulfilBuyOrderTask,
   OperatorNotificationsTask,
-  DeleteProcessedKmailTask,
+  PruneProcessedKmailsTask,
   GetWorthless,
   GetClovers,
   //StockClovers,
