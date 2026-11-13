@@ -152,6 +152,9 @@ async function formatAuditTransaction(
         : []),
       ...items,
     ];
+    if (transaction.type === "unallocated" && transaction.meat > 0) {
+      return `- ${transaction.timestamp} | Unallocated meat recorded: ${transaction.meat.toLocaleString()} meat${items.length > 0 ? `; Unallocated from promotional account: ${items.join(", ")}` : ""}`;
+    }
     const description =
       transaction.type === "unallocated"
         ? "Unallocated from promotional account"
