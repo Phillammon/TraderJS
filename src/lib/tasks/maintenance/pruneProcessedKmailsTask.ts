@@ -19,7 +19,9 @@ export const PruneProcessedKmailsTask: Task = {
     }
     if (prunedCount > 0) {
       state.save();
-      console.log(`Pruned ${prunedCount} processed kmail ID(s) no longer in the inbox.`);
+      console.log(
+        `Pruned ${prunedCount} processed kmail ID(s) no longer in the inbox.`,
+      );
     }
     return true;
   },

@@ -742,7 +742,7 @@ async function parseBuyOrder(text: string): Promise<
 > {
   const trimmed = text.trim();
   const atCount = [...trimmed].filter((character) => character === "@").length;
-  if (atCount !== 1) {
+  if (atCount > 1) {
     return {
       ok: false,
       reason:
