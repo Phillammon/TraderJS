@@ -14,7 +14,7 @@ export const ParseKmailTask: Task = {
       return true;
     }
 
-    const messages = await client.kmail.fetch();
+    const messages = await client.kmail.fetch(100);
     return !messages.some(
       (message) =>
         !state.processedKmailIds.has(message.id) &&
@@ -26,7 +26,7 @@ export const ParseKmailTask: Task = {
       return true;
     }
 
-    const messages = await client.kmail.fetch();
+    const messages = await client.kmail.fetch(100);
     const pendingMessages = messages.filter(
       (message) => !state.processedKmailIds.has(message.id),
     );
