@@ -3,12 +3,12 @@ import type { Task } from "../../types.js";
 export const PruneProcessedKmailsTask: Task = {
   name: "Prune Processed Kmail IDs",
   done: async (client, state) => {
-    const messages = await client.kmail.fetch();
+    const messages = await client.kmail.fetch(100);
     const inboxIds = new Set(messages.map((message) => message.id));
     return [...state.processedKmailIds].every((id) => inboxIds.has(id));
   },
   execute: async (client, state) => {
-    const messages = await client.kmail.fetch();
+    const messages = await client.kmail.fetch(100);
     const inboxIds = new Set(messages.map((message) => message.id));
     let prunedCount = 0;
     for (const messageId of state.processedKmailIds) {
