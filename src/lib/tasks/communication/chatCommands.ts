@@ -1,13 +1,17 @@
 import type { ChatCommand } from "../../state.js";
 
-const CHAT_COMMANDS: readonly ChatCommand[] = [
-  "help",
-  "orders",
-  "withdraw",
-  "balance",
-];
-
 export function parseChatCommand(message: string): ChatCommand | undefined {
-  const requestedCommand = message.trim().toLowerCase();
-  return CHAT_COMMANDS.find((command) => command === requestedCommand);
+  switch (message.trim().toLowerCase()) {
+    case "help":
+      return "help";
+    case "orders":
+    case "offers":
+      return "orders";
+    case "withdraw":
+      return "withdraw";
+    case "balance":
+      return "balance";
+    default:
+      return undefined;
+  }
 }

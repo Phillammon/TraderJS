@@ -299,10 +299,10 @@ export class TraderState {
     });
     account.surplusMeat =
       account.meat -
-      ([...account.orders.values()].reduce(
+      [...account.orders.values()].reduce(
         (total, order) => total + order.meat,
         0,
-      ));
+      );
     return { quantity, allocatedMeat, releasedMeat };
   }
 
@@ -393,7 +393,9 @@ export class TraderState {
       return;
     }
 
-    const stored = JSON.parse(fs.readFileSync(this.stateFile, "utf8")) as unknown;
+    const stored = JSON.parse(
+      fs.readFileSync(this.stateFile, "utf8"),
+    ) as unknown;
     if (!isRecord(stored) || !isRecord(stored.players)) {
       throw new TypeError(`Invalid state file format: ${this.stateFile}`);
     }
@@ -470,7 +472,9 @@ export class TraderState {
     }
     if (stored.pendingChatBuyOrders !== undefined) {
       if (!isRecord(stored.pendingChatBuyOrders)) {
-        throw new TypeError(`Invalid pending chat buy orders: ${this.stateFile}`);
+        throw new TypeError(
+          `Invalid pending chat buy orders: ${this.stateFile}`,
+        );
       }
       for (const [id, request] of Object.entries(stored.pendingChatBuyOrders)) {
         if (
@@ -496,11 +500,15 @@ export class TraderState {
     }
     if (stored.seenChatBuyOrderIds !== undefined) {
       if (!Array.isArray(stored.seenChatBuyOrderIds)) {
-        throw new TypeError(`Invalid seen chat buy order ids: ${this.stateFile}`);
+        throw new TypeError(
+          `Invalid seen chat buy order ids: ${this.stateFile}`,
+        );
       }
       for (const id of stored.seenChatBuyOrderIds) {
         if (typeof id !== "string" || !id) {
-          throw new TypeError(`Invalid seen chat buy order id: ${this.stateFile}`);
+          throw new TypeError(
+            `Invalid seen chat buy order id: ${this.stateFile}`,
+          );
         }
         this.seenChatBuyOrderIds.add(id);
       }
@@ -530,7 +538,9 @@ export class TraderState {
       if (!isRecord(stored.pendingKmailReplies)) {
         throw new TypeError(`Invalid pending kmail replies: ${this.stateFile}`);
       }
-      for (const [replyId, reply] of Object.entries(stored.pendingKmailReplies)) {
+      for (const [replyId, reply] of Object.entries(
+        stored.pendingKmailReplies,
+      )) {
         if (!/^(?:[1-9]\d*|chat-order:[a-f\d]{64})$/.test(replyId)) {
           throw new TypeError(`Invalid pending kmail reply id ${replyId}`);
         }
@@ -549,7 +559,9 @@ export class TraderState {
         };
         if (reply.items !== undefined) {
           if (!isRecord(reply.items)) {
-            throw new TypeError(`Invalid attached items for kmail reply ${replyId}`);
+            throw new TypeError(
+              `Invalid attached items for kmail reply ${replyId}`,
+            );
           }
           const items: Record<string, number> = {};
           for (const [itemIdText, quantity] of Object.entries(reply.items)) {
@@ -616,7 +628,12 @@ export class TraderState {
       if (!isRecord(stored.chatQueues)) {
         throw new TypeError(`Invalid chat queues: ${this.stateFile}`);
       }
-      for (const command of ["help", "orders", "withdraw", "balance"] as const) {
+      for (const command of [
+        "help",
+        "orders",
+        "withdraw",
+        "balance",
+      ] as const) {
         const queue = stored.chatQueues[command];
         if (queue === undefined) {
           continue;
@@ -846,12 +863,11 @@ export class TraderState {
       );
     }
     if (player.meat < totalPrice) {
-      throw new RangeError(`Player ${playerId} does not have enough stored meat`);
+      throw new RangeError(
+        `Player ${playerId} does not have enough stored meat`,
+      );
     }
-    if (
-      quantity >
-      Number.MAX_SAFE_INTEGER - (player.items.get(itemId) ?? 0)
-    ) {
+    if (quantity > Number.MAX_SAFE_INTEGER - (player.items.get(itemId) ?? 0)) {
       throw new RangeError(`Purchase quantity for item ${itemId} is too large`);
     }
     const saleProceeds = player.transactions.reduce(
@@ -919,7 +935,9 @@ export class TraderState {
     const player = this.getPlayer(playerId);
     const itemQuantity = player.items.get(itemId) ?? 0;
     if (itemQuantity < quantity) {
-      throw new RangeError(`Player ${playerId} does not have enough item ${itemId}`);
+      throw new RangeError(
+        `Player ${playerId} does not have enough item ${itemId}`,
+      );
     }
     const meat = quantity * price;
     if (!Number.isSafeInteger(meat)) {
@@ -1115,9 +1133,10 @@ export class TraderState {
         quantity >
           Number.MAX_SAFE_INTEGER - (player.surplusItems.get(itemId) ?? 0)
       ) {
-        throw new RangeError(`Surplus quantity for item ${itemId} is too large`);
+        throw new RangeError(
+          `Surplus quantity for item ${itemId} is too large`,
+        );
       }
-
     }
 
     player.meat += meat;
@@ -1171,10 +1190,7 @@ export class TraderState {
     });
   }
 
-  public markKmailProcessed(
-    kmailId: number,
-    reply?: PendingKmailReply,
-  ): void {
+  public markKmailProcessed(kmailId: number, reply?: PendingKmailReply): void {
     if (!Number.isSafeInteger(kmailId) || kmailId <= 0) {
       throw new RangeError(`Invalid kmail id: ${kmailId}`);
     }
@@ -1215,7 +1231,9 @@ export class TraderState {
     }
     const existing = this.pendingKmailActions.get(kmailId);
     if (existing && existing !== action) {
-      throw new Error(`Kmail ${kmailId} already has a different pending action`);
+      throw new Error(
+        `Kmail ${kmailId} already has a different pending action`,
+      );
     }
     this.pendingKmailActions.set(kmailId, action);
   }
@@ -1367,7 +1385,9 @@ export class TraderState {
       order.meat > player.meat ||
       order.meat > Number.MAX_SAFE_INTEGER - player.surplusMeat
     ) {
-      throw new RangeError(`Cannot safely release order meat for player ${playerId}`);
+      throw new RangeError(
+        `Cannot safely release order meat for player ${playerId}`,
+      );
     }
     player.orders.delete(itemId);
     player.surplusMeat += order.meat;
@@ -1400,7 +1420,9 @@ export class TraderState {
 
     const player = this.getPlayer(playerId);
     if (player.meat < meat) {
-      throw new RangeError(`Player ${playerId} does not have enough stored meat`);
+      throw new RangeError(
+        `Player ${playerId} does not have enough stored meat`,
+      );
     }
     const withdrawnItems: Record<string, number> = {};
     for (const [itemId, quantity] of items) {
@@ -1443,7 +1465,9 @@ export class TraderState {
   public completeChatRequest(command: ChatCommand, playerId: number): void {
     const queue = this.queueFor(command);
     if (queue[0] !== playerId) {
-      throw new Error(`Unexpected ${command} queue entry for player ${playerId}`);
+      throw new Error(
+        `Unexpected ${command} queue entry for player ${playerId}`,
+      );
     }
     queue.shift();
   }
@@ -1648,7 +1672,9 @@ function parseAuditTransactions(input: unknown): AuditTransaction[] {
         !Number.isSafeInteger(transaction.meat) ||
         transaction.meat < 0
       ) {
-        throw new TypeError(`Invalid order cancellation audit transaction ${index}`);
+        throw new TypeError(
+          `Invalid order cancellation audit transaction ${index}`,
+        );
       }
       return {
         type: "orderCancelled",
@@ -1659,10 +1685,7 @@ function parseAuditTransactions(input: unknown): AuditTransaction[] {
       };
     }
 
-    if (
-      transaction.type === "bought" ||
-      transaction.type === "sold"
-    ) {
+    if (transaction.type === "bought" || transaction.type === "sold") {
       if (
         typeof transaction.itemId !== "number" ||
         !Number.isSafeInteger(transaction.itemId) ||
