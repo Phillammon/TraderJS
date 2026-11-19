@@ -51,7 +51,7 @@ export const TraderTasks: Task[] = [
   PruneProcessedKmailsTask,
   GetWorthless,
   GetClovers,
-  //StockClovers,
+  StockClovers,
   SpamOffChatEffectsTask,
   ChatBeaconTask,
   PollChatTask,
