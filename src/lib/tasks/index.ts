@@ -18,6 +18,7 @@ import {
 import { CancelOrderTask } from "./trading/cancelOrder.js";
 import { CreateBuyOrderTask } from "./trading/createBuyOrderTask.js";
 import { FulfilBuyOrderTask } from "./trading/fulfillBuyOrderTask.js";
+import { DeclineTradesTask } from "./trading/declineTradesTask.js";
 import { OrdersTask } from "./trading/ordersTask.js";
 import { ParseKmailTask } from "./trading/parseKmailTask.js";
 import type { Task } from "../types.js";
@@ -39,6 +40,7 @@ export const TraderTasks: Task[] = [
   OpenGiftPackagesTask,
   HelpTask,
   OrdersTask,
+  DeclineTradesTask,
   BalanceTask,
   WithdrawTask,
   RegularWithdrawalTask,
